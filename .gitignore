@@ -32,6 +32,14 @@ build/
 dist/
 *.egg-info/
 .pytest_cache/
+*.spec.bak
+
+# --- Bat-файлы сборки (если хотите их в git — оставьте, если нет — удалите) ---
+# build_exe.bat
+
+# --- Иконки и статика (нужны в git, но проверим) ---
+# icon.ico
+# static/favicon.ico
 
 # --- IDE ---
 .idea/
@@ -43,6 +51,21 @@ dist/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# --- IDE ---
+.idea/
+.vscode/
+
+# --- Сертификаты и ключи ---
+*.key
+*.crt
+*.pem
+auto.key
+auto.crt
+
+# --- Дампы и архивы ---
+*.zip
+vhs-diagnostics_*.zip
 
 # --- IDE ---
 .idea/

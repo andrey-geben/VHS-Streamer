@@ -39,7 +39,9 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # Пути
 # ----------------------------------------------------------------------
-BASE_DIR = Path(__file__).parent.resolve()
+from helper import app_dir, app_path
+
+BASE_DIR = app_dir()
 LOG_FILE = BASE_DIR / "logs" / "vhs-streamer.log"
 CONFIG_FILE = BASE_DIR / "config.yaml"
 

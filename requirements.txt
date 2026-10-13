@@ -4,3 +4,4 @@ PyYAML==6.0.2
 Werkzeug==3.0.3
 requests==2.32.3
 imageio-ffmpeg==0.5.1
+pyinstaller==6.10.0

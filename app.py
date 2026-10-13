@@ -19,7 +19,10 @@ from flask import (
 # ----------------------------------------------------------------------
 # Пути и логирование
 # ----------------------------------------------------------------------
-BASE_DIR = Path(__file__).parent.resolve()
+from helper import app_dir, resource_dir, resource_path
+
+BASE_DIR = app_dir()                 # куда писать (рядом с .exe)
+RES_DIR = resource_dir()             # откуда читать шаблоны
 CONFIG_PATH = BASE_DIR / "config.yaml"
 LOG_DIR = BASE_DIR / "logs"
 LOG_FILE = LOG_DIR / "vhs-streamer.log"
@@ -118,6 +121,7 @@ streams_cfg = config.get("streams", [])
 # ======================================================================
 _mediamtx_bin_name = "mediamtx.exe" if IS_WINDOWS else "mediamtx"
 _mediamtx_binary = bootstrap_get_path(_mediamtx_bin_name)
+# mediamtx.yml — рядом с .exe (пользователь может править)
 _mediamtx_config = BASE_DIR / "mediamtx.yml"
 
 mediamtx: MediaMTXManager | None = None
@@ -226,7 +230,10 @@ for cam_cfg in cameras_cfg:
 # ======================================================================
 #  Flask
 # ======================================================================
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=str(RES_DIR / "templates"),
+)
 app.secret_key = server_cfg.get("secret_key", "dev-secret-change-me")
 app.config["APP_CONFIG"] = config
 app.permanent_session_lifetime = timedelta(
@@ -288,6 +295,16 @@ def logout():
     auth_mod.do_logout()
     return redirect(url_for("login"))
 
+# ======================================================================
+#  favicon.ico
+# ======================================================================
+@app.route("/favicon.ico")
+def favicon():
+    from flask import send_file
+    return send_file(
+        RES_DIR / "static" / "favicon.ico",
+        mimetype="image/x-icon",
+    )
 
 # ======================================================================
 #  Главная

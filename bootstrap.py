@@ -47,7 +47,9 @@ else:
 # ----------------------------------------------------------------------
 # Пути и источники
 # ----------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).parent.resolve()
+from helper import app_dir
+
+PROJECT_ROOT = app_dir()
 BIN_DIR = PROJECT_ROOT / "bin"
 MARKER_FILE = BIN_DIR / ".installed.json"
 

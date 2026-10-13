@@ -1,0 +1,29 @@
+logLevel: info
+
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+# --- WebRTC: для показа в браузере без перекодирования ---
+# Браузер подключается к 8889, получает H.264 напрямую,
+# декодирует средствами GPU. Качество — как с камеры.
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcAllowOrigin: '*'
+webrtcLocalUDPAddress: :8189
+
+# Список адресов, по которым браузер может достучаться до сервера.
+# Укажите свой LAN-IP. Можно несколько — через запятую.
+webrtcAdditionalHosts: [192.168.1.101]
+
+# --- Отключаем остальное ---
+rtmp: no
+hls: no
+srt: no
+playback: no
+
+# --- API ---
+api: yes
+apiAddress: 127.0.0.1:9997
+
+paths: {}

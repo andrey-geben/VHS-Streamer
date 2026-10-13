@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}VHS-Streamer{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: Arial, sans-serif;
+            background: #14161a; color: #e8e8e8;
+        }
+        header {
+            background: #1e2126; padding: 12px 24px;
+            display: flex; align-items: center; justify-content: space-between;
+            border-bottom: 1px solid #2a2f37;
+        }
+        header .brand { font-size: 1.3em; color: #4da3ff; font-weight: bold; }
+        header nav a {
+            color: #cfd6e0; text-decoration: none; margin-left: 18px;
+            padding: 6px 10px; border-radius: 4px;
+        }
+        header nav a:hover { background: #2a2f37; }
+        header .user { color: #8b96a5; font-size: 0.9em; }
+        main { padding: 20px 24px; }
+        .btn {
+            background: #2a6df4; color: #fff; border: none; border-radius: 4px;
+            padding: 8px 14px; cursor: pointer; text-decoration: none;
+            display: inline-block; font-size: 0.95em;
+        }
+        .btn:hover { background: #1e5bd8; }
+        .btn.secondary { background: #3a4150; }
+        .btn.secondary:hover { background: #4a5260; }
+        .btn.danger { background: #b13a3a; }
+        .btn.danger:hover { background: #cf4545; }
+        .card {
+            background: #1e2126; border: 1px solid #2a2f37;
+            border-radius: 8px; padding: 16px; margin-bottom: 16px;
+        }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; }
+        .status-on { color: #57d87a; }
+        .status-off { color: #f16a6a; }
+        .muted { color: #8b96a5; font-size: 0.9em; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #2a2f37; }
+        th { color: #8b96a5; font-weight: normal; font-size: 0.9em; }
+        a.filelink { color: #6cb2ff; text-decoration: none; }
+        a.filelink:hover { text-decoration: underline; }
+        input, select {
+            background: #14161a; border: 1px solid #2a2f37; border-radius: 4px;
+            color: #e8e8e8; padding: 7px 9px; font-size: 0.95em;
+        }
+        input:focus, select:focus { outline: 1px solid #4da3ff; }
+        label { color: #8b96a5; font-size: 0.9em; }
+        .form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+        .form-row label { min-width: 200px; }
+        .form-row input[type=text], .form-row input[type=number] { flex: 1; }
+        .toast {
+            position: fixed; bottom: 20px; right: 20px;
+            background: #2a6df4; color: #fff; padding: 12px 18px;
+            border-radius: 6px; z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,.4);
+            display: none;
+        }
+        .toast.err { background: #b13a3a; }
+    </style>
+</head>
+<body>
+<header>
+    <div class="brand">🎥 VHS-Streamer</div>
+    <nav>
+        <a href="{{ url_for('index') }}">Камеры</a>
+        <a href="{{ url_for('archive_page') }}">Архив</a>
+        <a href="{{ url_for('settings.settings_page') }}">Настройки</a>
+        <a href="{{ url_for('api_status') }}">API</a>
+        {% if user %}
+            <span class="user">{{ user.username }} ({{ user.role }})</span>
+            <a href="{{ url_for('logout') }}">Выход</a>
+        {% endif %}
+    </nav>
+</header>
+<main>
+    {% block content %}{% endblock %}
+</main>
+
+<div class="toast" id="global-toast"></div>
+<script>
+    // Простой тостик для уведомлений
+    function showToast(text, isError) {
+        const el = document.getElementById('global-toast');
+        el.textContent = text;
+        el.className = 'toast' + (isError ? ' err' : '');
+        el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 3000);
+    }
+</script>
+</body>
+</html>

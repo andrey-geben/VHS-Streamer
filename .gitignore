@@ -1,0 +1,60 @@
+# --- Виртуальное окружение ---
+.venv/
+venv/
+env/
+
+# --- Скачанные бинарники ---
+bin/
+
+# --- Секреты и личные данные ---
+config.yaml
+*.local.yaml
+
+# --- Архив записей ---
+archive/
+recordings/
+
+# --- Логи ---
+logs/
+*.log
+
+# --- Диагностика ---
+vhs-diagnostics_*.zip
+run.pid
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- OS ---
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# --- IDE ---
+.idea/
+.vscode/
+
+# --- Сертификаты и ключи ---
+*.key
+*.crt
+*.pem
+auto.key
+auto.crt
+
+# --- Дампы и архивы ---
+*.zip
+vhs-diagnostics_*.zip

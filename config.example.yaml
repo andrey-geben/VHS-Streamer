@@ -1,0 +1,76 @@
+# =====================================================================
+#  VHS-Streamer — пример конфигурации
+# =====================================================================
+#  Скопируйте этот файл в config.yaml и заполните своими значениями:
+#      copy config.example.yaml config.yaml
+# =====================================================================
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  # ОБЯЗАТЕЛЬНО поменяйте! Сгенерировать: python -c "import secrets; print(secrets.token_urlsafe(48))"
+  secret_key: "CHANGE-ME-to-a-long-random-string"
+
+network:
+  interfaces:
+    - name: eth0
+      ip: 10.0.1.10
+      description: "Сеть охраны труда"
+    - name: eth1
+      ip: 192.168.1.10
+      description: "Сеть безопасности"
+    - name: eth2
+      ip: 172.16.0.10
+      description: "Изолированная сеть"
+
+mediamtx:
+  binary: "./bin/mediamtx.exe"
+  config: "./mediamtx.yml"
+  rtsp_port: 8554
+  api_url: "http://127.0.0.1:9997"
+  loopback_codec: auto
+
+security:
+  auth_enabled: true
+  users:
+    - username: admin
+      password: "CHANGE-ME"
+      role: admin
+    - username: viewer
+      password: "CHANGE-ME"
+      role: viewer
+  api_token: "CHANGE-ME-api-token"
+  session_lifetime_hours: 24
+
+duplicate_stream:
+  enabled: false
+  port: 8080
+  host: 0.0.0.0
+  require_auth: true
+
+archive:
+  enabled: true
+  path: "./archive"
+  segment_minutes: 5
+  max_size_gb: 50
+  max_age_days: 30
+  cleanup_interval_sec: 60
+  codec: "mp4v"
+  extension: ".mp4"
+  record_all: true
+
+cameras:
+  - id: analog_1
+    name: "Встроенная камера"
+    type: analog
+    source: "HD User Facing"
+    capture_index: 0
+    fps: 25
+    width: 720
+    height: 576
+    record: true
+    transport: null
+    open_timeout_ms: 5000
+    read_timeout_ms: 5000
+
+streams: []

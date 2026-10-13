@@ -1,0 +1,607 @@
+{% extends "base.html" %}
+{% block title %}Настройки — VHS-Streamer{% endblock %}
+{% block content %}
+
+<h2 style="margin-top:0">Настройки системы</h2>
+
+<div class="card">
+    <h3 style="margin-top:0; display:flex; justify-content:space-between; align-items:center">
+        Камеры
+        <button class="btn" onclick="openCameraModal()">+ Добавить камеру</button>
+    </h3>
+    <table id="cameras-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Название</th>
+                <th>Тип</th>
+                <th>Источник</th>
+                <th>Индекс</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Архив (циклическая запись)</h3>
+    <div class="form-row"><label>Включён</label>
+        <input type="checkbox" id="arch-enabled"></div>
+    <div class="form-row"><label>Путь архива</label>
+        <input type="text" id="arch-path"></div>
+    <div class="form-row"><label>Длина сегмента (мин)</label>
+        <input type="number" id="arch-segment" min="1" max="120"></div>
+    <div class="form-row"><label>Лимит по размеру (ГБ)</label>
+        <input type="number" id="arch-size" min="1"></div>
+    <div class="form-row"><label>Хранить (дней)</label>
+        <input type="number" id="arch-age" min="1"></div>
+    <div class="form-row"><label>Кодек</label>
+        <select id="arch-codec">
+            <option value="mp4v">mp4v (MP4)</option>
+            <option value="XVID">XVID (AVI)</option>
+            <option value="MJPG">MJPG (AVI)</option>
+        </select></div>
+    <div class="form-row"><label>Расширение</label>
+        <input type="text" id="arch-ext"></div>
+    <button class="btn" onclick="saveArchive()">Сохранить</button>
+    <p class="muted">Изменение пути архива требует перезапуска сервера.</p>
+</div>
+
+<div class="card" id="streams-card">
+    <h3 style="margin-top:0">Дублирование потока (RTSP через MediaMTX)</h3>
+    <p class="muted">
+        С одной камеры можно создать до <b>3</b> потоков.
+        Готовые RTSP-адреса для копирования появятся в таблице ниже.
+    </p>
+
+    <div class="form-row">
+        <label>Камера-источник</label>
+        <select id="stream-camera" style="flex:1">
+            <option value="">— выберите камеру —</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label>Транскодировать</label>
+        <input type="checkbox" id="stream-transcode">
+        <span class="muted" style="margin-left:8px">
+            для мобильного интернета (640×360, 500 kbps, 15 fps)
+        </span>
+    </div>
+    <button class="btn" onclick="createStream()">+ Создать поток</button>
+
+    <div id="streams-load-warning" class="muted" style="margin-top:8px"></div>
+
+    <h4 style="margin-top:20px">Существующие потоки</h4>
+    <table id="streams-table">
+        <thead>
+            <tr>
+                <th style="width:12%">ID</th>
+                <th style="width:14%">Камера</th>
+                <th>RTSP-адреса для копирования</th>
+                <th style="width:12%">Тип</th>
+                <th style="width:12%">Статус</th>
+                <th style="width:8%">Действия</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Диагностика</h3>
+    <p class="muted">
+        Собирает информацию о системе, конфигурации (без паролей),
+        состоянии MediaMTX, устройствах FFmpeg и последние строки логов.
+    </p>
+    <button class="btn" onclick="downloadDiagnostics()">Скачать диагностику</button>
+    <p class="muted" style="margin-top:8px">
+        Лог: <code>logs/vhs-streamer.log</code> (ротация 10 МБ × 3).
+    </p>
+</div>
+
+{% if user and user.role == 'admin' %}
+<div class="card" id="security-card">
+    <h3 style="margin-top:0">Безопасность</h3>
+    <p class="muted">Раздел виден только администраторам.</p>
+    <h4>Пользователи</h4>
+    <table id="users-table">
+        <thead>
+            <tr><th>Логин</th><th>Пароль</th><th>Роль</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <button class="btn secondary" onclick="addUserRow()">+ Добавить пользователя</button>
+
+    <h4 style="margin-top:24px">API-токен</h4>
+    <div class="form-row">
+        <label>Токен</label>
+        <input type="text" id="api-token" style="flex:1">
+        <button class="btn secondary" type="button" onclick="generateToken()">Сгенерировать</button>
+    </div>
+    <button class="btn" onclick="saveSecurity()" style="margin-top:12px">Сохранить</button>
+</div>
+{% endif %}
+
+<div id="camera-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100;">
+    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:560px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
+        <h3 style="margin-top:0" id="modal-title">Камера</h3>
+        <div class="form-row"><label>ID (латиница)</label><input type="text" id="m-id"></div>
+        <div class="form-row"><label>Название</label><input type="text" id="m-name"></div>
+        <div class="form-row"><label>Тип</label>
+            <select id="m-type">
+                <option value="ip">IP (RTSP/HTTP)</option>
+                <option value="analog">Аналоговая (USB/карта)</option>
+            </select></div>
+        <div class="form-row"><label>Источник</label>
+            <input type="text" id="m-source" placeholder="rtsp://... или имя dshow"></div>
+        <div class="form-row">
+            <label>Индекс захвата</label>
+            <input type="number" id="m-capture-index" placeholder="0" min="0">
+            <span class="muted" style="margin-left:8px">для аналоговой</span>
+        </div>
+        <div class="form-row"><label>Транспорт (для IP)</label>
+            <select id="m-transport">
+                <option value="">— по умолчанию —</option>
+                <option value="tcp">tcp</option>
+                <option value="udp">udp</option>
+            </select></div>
+        <div class="form-row"><label>FPS</label><input type="number" id="m-fps" value="25" min="1" max="60"></div>
+        <div class="form-row"><label>Ширина</label><input type="number" id="m-width" value="640"></div>
+        <div class="form-row"><label>Высота</label><input type="number" id="m-height" value="480"></div>
+        <div class="form-row"><label>Писать в архив</label><input type="checkbox" id="m-record" checked></div>
+        <div style="text-align:right; margin-top:16px">
+            <button class="btn secondary" onclick="closeCameraModal()">Отмена</button>
+            <button class="btn" onclick="saveCamera()">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<div id="limit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:110;">
+    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:620px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
+        <h3 style="margin-top:0; color:#f5b944">Достигнут лимит: 3 потока на камеру</h3>
+        <p>У камеры <b id="limit-camera-name"></b> уже <b>3</b> потока — это максимум. Чтобы создать новый, нужно заменить один из существующих.</p>
+        <div id="limit-streams-list" style="margin-top:14px"></div>
+        <div style="text-align:right; margin-top:20px">
+            <button class="btn secondary" onclick="closeLimitModal()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function api(method, url, body) {
+    const opts = { method, headers: { 'Accept': 'application/json' } };
+    if (body !== undefined) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(url, opts);
+    const isJson = (r.headers.get('content-type') || '').includes('application/json');
+    const data = isJson ? await r.json() : null;
+    if (!r.ok) {
+        const msg = (data && data.error) ? data.error : ('Ошибка ' + r.status);
+        showToast(msg, true);
+        throw new Error(msg);
+    }
+    return data;
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast('Скопировано: ' + text);
+    } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            showToast('Скопировано: ' + text);
+        } catch (err) {
+            showToast('Не удалось скопировать', true);
+        }
+        document.body.removeChild(ta);
+    }
+}
+
+let camerasList = [];
+let allStreams = [];
+const MAX_PER_CAMERA = 3;
+
+async function loadCameras() {
+    camerasList = await api('GET', '/api/cameras');
+    const tbody = document.querySelector('#cameras-table tbody');
+    tbody.innerHTML = '';
+    camerasList.forEach(c => {
+        const tr = document.createElement('tr');
+        const idx = (c.capture_index === null || c.capture_index === undefined)
+            ? '<span class="muted">—</span>'
+            : c.capture_index;
+        tr.innerHTML = `
+            <td>${escapeHtml(c.id)}</td>
+            <td>${escapeHtml(c.name)}</td>
+            <td>${escapeHtml(c.type)}</td>
+            <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.source)}</td>
+            <td>${idx}</td>
+            <td>${c.connected ? '<span class="status-on">● онлайн</span>' : '<span class="status-off">○ оффлайн</span>'}</td>
+            <td>
+                <button class="btn secondary" onclick="openCameraModal('${escapeHtml(c.id)}')">✎</button>
+                <button class="btn secondary" onclick="restartCamera('${escapeHtml(c.id)}')">↻</button>
+                <button class="btn danger" onclick="deleteCamera('${escapeHtml(c.id)}')">✕</button>
+            </td>`;
+        tbody.appendChild(tr);
+    });
+}
+
+function openCameraModal(cameraId) {
+    document.getElementById('modal-title').textContent =
+        cameraId ? 'Редактирование камеры' : 'Новая камера';
+    document.getElementById('camera-modal').dataset.mode = cameraId ? 'edit' : 'add';
+
+    if (cameraId) {
+        const c = camerasList.find(x => x.id === cameraId);
+        document.getElementById('m-id').value = c.id;
+        document.getElementById('m-id').disabled = true;
+        document.getElementById('m-name').value = c.name;
+        document.getElementById('m-type').value = c.type;
+        document.getElementById('m-source').value = c.source;
+        document.getElementById('m-capture-index').value =
+            (c.capture_index === null || c.capture_index === undefined) ? '' : c.capture_index;
+        document.getElementById('m-transport').value = c.transport || '';
+        document.getElementById('m-fps').value = c.fps;
+        document.getElementById('m-width').value = c.width;
+        document.getElementById('m-height').value = c.height;
+    } else {
+        document.getElementById('m-id').value = '';
+        document.getElementById('m-id').disabled = false;
+        document.getElementById('m-name').value = '';
+        document.getElementById('m-type').value = 'ip';
+        document.getElementById('m-source').value = '';
+        document.getElementById('m-capture-index').value = '';
+        document.getElementById('m-transport').value = '';
+        document.getElementById('m-fps').value = 25;
+        document.getElementById('m-width').value = 640;
+        document.getElementById('m-height').value = 480;
+    }
+    document.getElementById('m-record').checked = true;
+    document.getElementById('camera-modal').style.display = 'block';
+}
+
+function closeCameraModal() {
+    document.getElementById('camera-modal').style.display = 'none';
+}
+
+async function saveCamera() {
+    const mode = document.getElementById('camera-modal').dataset.mode;
+    const ciRaw = document.getElementById('m-capture-index').value.trim();
+    const payload = {
+        id: document.getElementById('m-id').value.trim(),
+        name: document.getElementById('m-name').value.trim(),
+        type: document.getElementById('m-type').value,
+        source: document.getElementById('m-source').value.trim(),
+        capture_index: ciRaw === '' ? null : parseInt(ciRaw, 10),
+        transport: document.getElementById('m-transport').value || null,
+        fps: parseInt(document.getElementById('m-fps').value) || 25,
+        width: parseInt(document.getElementById('m-width').value) || 640,
+        height: parseInt(document.getElementById('m-height').value) || 480,
+        record: document.getElementById('m-record').checked,
+    };
+    try {
+        if (mode === 'edit') {
+            await api('PUT', '/api/cameras/' + encodeURIComponent(payload.id), payload);
+            showToast('Камера обновлена');
+        } else {
+            await api('POST', '/api/cameras', payload);
+            showToast('Камера добавлена');
+        }
+        closeCameraModal();
+        await loadCameras();
+        await loadStreamCameras();
+    } catch (e) {}
+}
+
+async function deleteCamera(id) {
+    if (!confirm('Удалить камеру ' + id + '?')) return;
+    try {
+        await api('DELETE', '/api/cameras/' + encodeURIComponent(id));
+        showToast('Камера удалена');
+        await loadCameras();
+        await loadStreamCameras();
+        await loadStreams();
+    } catch (e) {}
+}
+
+async function restartCamera(id) {
+    try {
+        await api('POST', '/api/cameras/' + encodeURIComponent(id) + '/restart');
+        showToast('Камера перезапущена');
+        await loadCameras();
+    } catch (e) {}
+}
+
+async function loadArchive() {
+    const c = await api('GET', '/api/archive/config');
+    document.getElementById('arch-enabled').checked = !!c.enabled;
+    document.getElementById('arch-path').value = c.path || '';
+    document.getElementById('arch-segment').value = c.segment_minutes || 5;
+    document.getElementById('arch-size').value = c.max_size_gb || 50;
+    document.getElementById('arch-age').value = c.max_age_days || 30;
+    document.getElementById('arch-codec').value = c.codec || 'mp4v';
+    document.getElementById('arch-ext').value = c.extension || '.mp4';
+}
+
+async function saveArchive() {
+    const payload = {
+        enabled: document.getElementById('arch-enabled').checked,
+        path: document.getElementById('arch-path').value.trim(),
+        segment_minutes: parseInt(document.getElementById('arch-segment').value) || 5,
+        max_size_gb: parseFloat(document.getElementById('arch-size').value) || 50,
+        max_age_days: parseInt(document.getElementById('arch-age').value) || 30,
+        codec: document.getElementById('arch-codec').value,
+        extension: document.getElementById('arch-ext').value.trim() || '.mp4',
+    };
+    try {
+        const r = await api('POST', '/api/archive/config', payload);
+        showToast(r.restart_required ? 'Сохранено. Требуется перезапуск!' : 'Настройки архива сохранены');
+    } catch (e) {}
+}
+
+function streamsCountFor(cameraId) {
+    return allStreams.filter(s => s.camera_id === cameraId).length;
+}
+function streamsFor(cameraId) {
+    return allStreams.filter(s => s.camera_id === cameraId);
+}
+
+async function loadStreamCameras() {
+    const sel = document.getElementById('stream-camera');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— выберите камеру —</option>';
+    camerasList.forEach(c => {
+        const count = streamsCountFor(c.id);
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        const suffix = count >= MAX_PER_CAMERA
+            ? ' (' + count + '/' + MAX_PER_CAMERA + ' — лимит)'
+            : ' (' + count + '/' + MAX_PER_CAMERA + ')';
+        opt.textContent = c.name + ' — ' + c.id + suffix;
+        sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
+
+    const loadDiv = document.getElementById('streams-load-warning');
+    const totalStreams = allStreams.length;
+    if (totalStreams > 0) {
+        const transcoding = allStreams.filter(s => !s.copy).length;
+        loadDiv.textContent = 'Всего потоков: ' + totalStreams +
+            ' (транскодирующих: ' + transcoding + ').';
+    } else {
+        loadDiv.textContent = '';
+    }
+}
+
+async function loadStreams() {
+    const data = await api('GET', '/api/streams');
+    allStreams = data.streams || [];
+
+    const tbody = document.querySelector('#streams-table tbody');
+    tbody.innerHTML = '';
+    if (allStreams.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="muted">Потоков пока нет.</td></tr>';
+        return;
+    }
+
+    allStreams.forEach(s => {
+        const tr = document.createElement('tr');
+        const runtime = s.runtime || {};
+        const ready = runtime.ready;
+        const readers = (runtime.readers || []).length;
+        const typeLabel = s.copy
+            ? '<span class="status-on">copy</span>'
+            : '<span class="status-off">transcode</span>';
+        const stateLabel = s.enabled
+            ? (ready ? '<span class="status-on">● готов' + (readers ? ' (' + readers + ')' : '') + '</span>' : '<span class="muted">○ ожидание</span>')
+            : '<span class="muted">○ выключен</span>';
+
+        const urls = s.urls || [];
+        const urlsHtml = urls.map(u =>
+            '<div style="display:flex; align-items:center; gap:8px; margin:2px 0">' +
+                '<code style="font-size:0.85em; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">' + escapeHtml(u.url) + '</code>' +
+                '<span class="muted" style="font-size:0.8em; white-space:nowrap">' + escapeHtml(u.label) + '</span>' +
+                '<button class="btn secondary" style="padding:3px 8px; font-size:0.8em" onclick="copyText(\'' + escapeHtml(u.url) + '\')">📋</button>' +
+            '</div>'
+        ).join('');
+
+        tr.innerHTML =
+            '<td><b>' + escapeHtml(s.id) + '</b></td>' +
+            '<td>' + escapeHtml(s.camera_name) + '</td>' +
+            '<td>' + (urlsHtml || '<span class="muted">—</span>') + '</td>' +
+            '<td>' + typeLabel + '</td>' +
+            '<td>' + stateLabel + '</td>' +
+            '<td>' +
+                '<button class="btn secondary" onclick="toggleStream(\'' + escapeHtml(s.id) + '\')">' + (s.enabled ? '⏸' : '▶') + '</button> ' +
+                '<button class="btn danger" onclick="deleteStream(\'' + escapeHtml(s.id) + '\')">✕</button>' +
+            '</td>';
+        tbody.appendChild(tr);
+    });
+}
+
+async function createStream() {
+    const cameraId = document.getElementById('stream-camera').value;
+    if (!cameraId) { showToast('Выберите камеру', true); return; }
+    const transcode = document.getElementById('stream-transcode').checked;
+    const existing = streamsFor(cameraId);
+    if (existing.length >= MAX_PER_CAMERA) {
+        const cam = camerasList.find(c => c.id === cameraId) || { name: cameraId };
+        showLimitModal(cameraId, cam.name, existing, transcode);
+        return;
+    }
+    try {
+        const r = await api('POST', '/api/streams', { camera_id: cameraId, transcode: transcode });
+        showToast('Поток создан: ' + r.stream.path);
+        await loadStreams();
+        await loadStreamCameras();
+    } catch (e) {}
+}
+
+async function deleteStream(id) {
+    if (!confirm('Удалить поток ' + id + '?')) return;
+    try {
+        await api('DELETE', '/api/streams/' + encodeURIComponent(id));
+        showToast('Поток удалён');
+        await loadStreams();
+        await loadStreamCameras();
+    } catch (e) {}
+}
+
+async function toggleStream(id) {
+    try {
+        const r = await api('POST', '/api/streams/' + encodeURIComponent(id) + '/toggle');
+        showToast(r.enabled ? 'Поток включён' : 'Поток выключен');
+        await loadStreams();
+    } catch (e) {}
+}
+
+let _limitContext = null;
+
+function showLimitModal(cameraId, cameraName, streams, transcode) {
+    _limitContext = { cameraId, transcode };
+    document.getElementById('limit-camera-name').textContent = cameraName;
+    const list = document.getElementById('limit-streams-list');
+    list.innerHTML = '';
+    streams.forEach(s => {
+        const row = document.createElement('div');
+        row.style.cssText = 'background:#14161a; padding:12px; margin:8px 0; border-radius:6px; border:1px solid #2a2f37; display:flex; justify-content:space-between; align-items:center; gap:12px;';
+        row.innerHTML =
+            '<div style="min-width:0; flex:1">' +
+                '<div><b>' + escapeHtml(s.id) + '</b></div>' +
+                '<div class="muted" style="font-size:0.85em">' + escapeHtml(s.path) + '</div>' +
+            '</div>' +
+            '<button class="btn danger" onclick="replaceStream(\'' + escapeHtml(s.id) + '\')">Заменить</button>';
+        list.appendChild(row);
+    });
+    document.getElementById('limit-modal').style.display = 'block';
+}
+
+function closeLimitModal() {
+    document.getElementById('limit-modal').style.display = 'none';
+    _limitContext = null;
+}
+
+async function replaceStream(removeStreamId) {
+    if (!_limitContext) return;
+    const { cameraId, transcode } = _limitContext;
+    if (!confirm('Заменить поток ' + removeStreamId + '?')) return;
+    try {
+        await api('DELETE', '/api/streams/' + encodeURIComponent(removeStreamId));
+        await new Promise(r => setTimeout(r, 300));
+        const r = await api('POST', '/api/streams', { camera_id: cameraId, transcode: transcode });
+        showToast('Поток заменён: ' + r.stream.path);
+        closeLimitModal();
+        await loadStreams();
+        await loadStreamCameras();
+    } catch (e) {}
+}
+
+function downloadDiagnostics() {
+    showToast('Готовлю отчёт, подождите...');
+    window.location.href = '/api/diagnostics/download';
+}
+
+function renderUserRow(u) {
+    u = u || { username: '', password: '', role: 'viewer' };
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+        '<td><input type="text" class="u-username" value="' + escapeHtml(u.username) + '" style="width:100%"></td>' +
+        '<td><input type="text" class="u-password" value="' + escapeHtml(u.password) + '" style="width:100%"></td>' +
+        '<td><select class="u-role">' +
+            '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>admin</option>' +
+            '<option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>viewer</option>' +
+        '</select></td>' +
+        '<td><button class="btn danger" type="button" onclick="this.closest(\'tr\').remove()">✕</button></td>';
+    return tr;
+}
+
+function addUserRow() {
+    document.querySelector('#users-table tbody').appendChild(renderUserRow());
+}
+
+function collectUsers() {
+    const rows = document.querySelectorAll('#users-table tbody tr');
+    const users = [];
+    for (const tr of rows) {
+        users.push({
+            username: tr.querySelector('.u-username').value.trim(),
+            password: tr.querySelector('.u-password').value,
+            role: tr.querySelector('.u-role').value,
+        });
+    }
+    return users;
+}
+
+async function loadSecurity() {
+    const data = await api('GET', '/api/security/config');
+    const tbody = document.querySelector('#users-table tbody');
+    tbody.innerHTML = '';
+    (data.users || []).forEach(u => tbody.appendChild(renderUserRow(u)));
+    document.getElementById('api-token').value = data.api_token || '';
+}
+
+async function generateToken() {
+    try {
+        const r = await api('POST', '/api/security/generate_token');
+        document.getElementById('api-token').value = r.token;
+        showToast('Токен сгенерирован');
+    } catch (e) {}
+}
+
+async function saveSecurity() {
+    const payload = {
+        users: collectUsers(),
+        api_token: document.getElementById('api-token').value.trim(),
+    };
+    try {
+        const r = await api('POST', '/api/security/config', payload);
+        showToast(r.warning || 'Настройки безопасности сохранены', !!r.warning);
+        await loadSecurity();
+    } catch (e) {}
+}
+
+(async function init() {
+    const steps = [
+        ['loadCameras', loadCameras],
+        ['loadArchive', loadArchive],
+        ['loadStreams', loadStreams],
+        ['loadStreamCameras', loadStreamCameras],
+    ];
+    for (const [name, fn] of steps) {
+        try {
+            await fn();
+            console.log('[init] OK:', name);
+        } catch (e) {
+            console.error('[init] FAILED:', name, e);
+            showToast('Ошибка загрузки: ' + name, true);
+        }
+    }
+    if (document.getElementById('users-table')) {
+        try {
+            await loadSecurity();
+            console.log('[init] OK: loadSecurity');
+        } catch (e) {
+            console.error('[init] FAILED: loadSecurity', e);
+        }
+    }
+})();
+</script>
+
+{% endblock %}

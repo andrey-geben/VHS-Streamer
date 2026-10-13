@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Камеры — VHS-Streamer{% endblock %}
+{% block content %}
+
+<div class="card" style="padding:12px 16px">
+    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; font-size:0.9em">
+        <div>Камер: <b>{{ sysinfo.cameras_online }}/{{ sysinfo.cameras_total }}</b></div>
+        <div>Рекордеров: <b>{{ sysinfo.recorders }}</b></div>
+        <div>Архив: <b>{{ sysinfo.archive_size }}</b></div>
+        <div>Потоков: <b>{{ sysinfo.streams_enabled }}/{{ sysinfo.streams_total }}</b></div>
+        {% if sysinfo.mediamtx_ready %}
+            <div class="status-on">● RTSP :{{ sysinfo.mediamtx_port }}</div>
+        {% endif %}
+        <div class="muted" style="margin-left:auto; font-size:0.85em">
+            WebRTC-плеер через MediaMTX
+        </div>
+    </div>
+</div>
+
+<div class="cam-grid">
+    {% for cam in cameras %}
+    {% set st = cam.get_status() %}
+    {% set rec = rec_statuses.get(cam.id) %}
+    <div class="cam-card">
+        <div class="cam-header">
+            <span class="cam-name" title="{{ cam.name }}">{{ cam.name }}</span>
+            <div style="display:flex; gap:6px; align-items:center">
+                {% if st.connected %}
+                    <span class="status-on" title="онлайн">●</span>
+                {% else %}
+                    <span class="status-off" title="{{ st.last_error or 'оффлайн' }}">○</span>
+                {% endif %}
+                <button class="cam-fs-btn"
+                        onclick="openFullscreen('{{ cam.id }}', '{{ cam.name|e }}')"
+                        title="Полный экран">⛶</button>
+            </div>
+        </div>
+
+        <div class="cam-preview"
+             onclick="openFullscreen('{{ cam.id }}', '{{ cam.name|e }}')"
+             title="Клик — полный экран">
+            <iframe class="cam-iframe"
+                    src="http://{{ request.host.split(':')[0] }}:8889/__raw_{{ cam.id }}/"
+                    allow="autoplay; fullscreen"
+                    scrolling="no"
+                    frameborder="0"></iframe>
+        </div>
+
+        <div class="cam-footer">
+            <span class="muted">{{ cam.id }}</span>
+            {% if rec %}
+                <span class="muted">⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ</span>
+            {% else %}
+                <span class="muted">запись выкл.</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div id="fs-overlay" class="fs-overlay">
+    <div class="fs-toolbar">
+        <span id="fs-title" class="fs-title"></span>
+        <button class="fs-close" onclick="closeFullscreen()" title="Закрыть (Esc)">✕</button>
+    </div>
+    <div class="fs-body">
+        <iframe id="fs-iframe"
+                allow="autoplay; fullscreen"
+                scrolling="no"
+                frameborder="0"
+                style="width:100%; height:100%"></iframe>
+    </div>
+</div>
+
+<style>
+    .cam-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+    }
+    .cam-card {
+        background: #1e2126;
+        border: 1px solid #2a2f37;
+        border-radius: 8px;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .cam-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.88em;
+        padding: 0 2px;
+    }
+    .cam-name {
+        font-weight: 600;
+        color: #e8e8e8;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 75%;
+    }
+    .cam-preview {
+        background: #000;
+        border-radius: 4px;
+        overflow: hidden;
+        aspect-ratio: 16 / 9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: outline 0.15s;
+        position: relative;
+    }
+    .cam-preview:hover {
+        outline: 1px solid #4da3ff;
+    }
+    .cam-iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+    }
+    .cam-footer {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.78em;
+        padding: 0 2px;
+    }
+    .cam-fs-btn {
+        background: transparent;
+        border: 1px solid #2a2f37;
+        color: #cfd6e0;
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-size: 0.9em;
+        cursor: pointer;
+        line-height: 1.2;
+    }
+    .cam-fs-btn:hover {
+        background: #2a2f37;
+        color: #fff;
+    }
+
+    .fs-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.95);
+        z-index: 500;
+        flex-direction: column;
+    }
+    .fs-overlay.active {
+        display: flex;
+    }
+    .fs-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 16px;
+        background: #1e2126;
+        border-bottom: 1px solid #2a2f37;
+    }
+    .fs-title {
+        color: #e8e8e8;
+        font-weight: 600;
+    }
+    .fs-close {
+        background: #b13a3a;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 1em;
+    }
+    .fs-close:hover {
+        background: #cf4545;
+    }
+    .fs-body {
+        flex: 1;
+        overflow: hidden;
+        padding: 0;
+    }
+</style>
+
+<script>
+const SERVER_HOST = window.location.hostname;
+const WEBRTC_PORT = 8889;
+
+function openFullscreen(cameraId, cameraName) {
+    const overlay = document.getElementById('fs-overlay');
+    const iframe = document.getElementById('fs-iframe');
+    document.getElementById('fs-title').textContent = cameraName || cameraId;
+    iframe.src = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT +
+                 '/__raw_' + encodeURIComponent(cameraId) + '/';
+    overlay.classList.add('active');
+    if (overlay.requestFullscreen) {
+        overlay.requestFullscreen().catch(() => {});
+    }
+}
+
+function closeFullscreen() {
+    const overlay = document.getElementById('fs-overlay');
+    document.getElementById('fs-iframe').src = '';
+    overlay.classList.remove('active');
+    if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+    }
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const overlay = document.getElementById('fs-overlay');
+        if (overlay && overlay.classList.contains('active')) {
+            closeFullscreen();
+        }
+    }
+});
+
+document.addEventListener('fullscreenchange', function() {
+    const overlay = document.getElementById('fs-overlay');
+    if (!document.fullscreenElement && overlay.classList.contains('active')) {
+        closeFullscreen();
+    }
+});
+</script>
+
+{% endblock %}

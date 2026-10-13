@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Архив — VHS-Streamer{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0">Архив записей</h2>
+    <p class="muted">Корневой путь: {{ archive_root }}</p>
+</div>
+
+{% for item in cams_data %}
+<div class="card">
+    <h3 style="margin-top:0">{{ item.camera.name }} <span class="muted">({{ item.camera.id }})</span></h3>
+
+    {% if item.recorder %}
+    <p class="muted">
+        Сегментов записано: {{ item.recorder.segments }} ·
+        Занято: {{ item.recorder.archive_size_mb }} МБ /
+        лимит {{ item.recorder.archive_size_limit_mb }} МБ
+    </p>
+    {% else %}
+    <p class="muted">Запись для этой камеры отключена.</p>
+    {% endif %}
+
+    {% if item.days %}
+        {% for day in item.days %}
+        <details style="margin-top:10px">
+            <summary style="cursor:pointer; padding:6px 0">
+                <b>{{ day.date }}</b>
+                <span class="muted">— {{ day.count }} файлов, {{ day.size }}</span>
+            </summary>
+            <table>
+                <thead><tr><th>Файл</th><th>Размер</th><th></th></tr></thead>
+                <tbody>
+                    {% for f in day.files %}
+                    <tr>
+                        <td>{{ f.name }}</td>
+                        <td>{{ f.size }}</td>
+                        <td>
+                            <a class="filelink"
+                               href="{{ url_for('archive_file', camera_id=item.camera.id, date=day.date, filename=f.name) }}"
+                               target="_blank">▶ открыть</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if day.count > 200 %}
+                <p class="muted">Показаны первые 200 файлов.</p>
+            {% endif %}
+        </details>
+        {% endfor %}
+    {% else %}
+        <p class="muted">Файлов пока нет.</p>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% endblock %}

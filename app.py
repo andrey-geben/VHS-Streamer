@@ -19,9 +19,9 @@ from flask import (
 # ----------------------------------------------------------------------
 # Пути и логирование
 # ----------------------------------------------------------------------
-from helper import app_dir, resource_dir, resource_path
+from helper import app_dir, resource_dir
 
-BASE_DIR = app_dir()                 # куда писать (рядом с .exe)
+BASE_DIR = app_dir()                 # куда писать (рядом с .exe или корень проекта)
 RES_DIR = resource_dir()             # откуда читать шаблоны
 CONFIG_PATH = BASE_DIR / "config.yaml"
 LOG_DIR = BASE_DIR / "logs"
@@ -95,7 +95,7 @@ from streams_api import streams_bp
 from diagnostics import diagnostics_bp
 from mediamtx_manager import MediaMTXManager
 import mediamtx_manager as _mtx_helpers
-from preview import needs_loopback, get_loopback_url, raw_path_name
+from preview import get_loopback_url, raw_path_name
 
 
 # ======================================================================
@@ -121,7 +121,6 @@ streams_cfg = config.get("streams", [])
 # ======================================================================
 _mediamtx_bin_name = "mediamtx.exe" if IS_WINDOWS else "mediamtx"
 _mediamtx_binary = bootstrap_get_path(_mediamtx_bin_name)
-# mediamtx.yml — рядом с .exe (пользователь может править)
 _mediamtx_config = BASE_DIR / "mediamtx.yml"
 
 mediamtx: MediaMTXManager | None = None
@@ -136,24 +135,26 @@ except Exception as e:
 
 
 # ======================================================================
-#  Loopback для аналоговых камер + восстановление пользовательских потоков
+#  Loopback для всех камер + восстановление пользовательских потоков
+# ======================================================================
+#  Все камеры (IP и аналоговые) публикуются в MediaMTX как raw-пути.
+#  Camera, рекордер и RTSP-клиенты читают из MediaMTX, а не из
+#  физической камеры. Это решает проблему эксклюзивного захвата
+#  на Windows и снижает нагрузку на камеру.
 # ======================================================================
 loopback_urls: dict[str, str] = {}  # cam_id -> rtsp URL
 
 if mediamtx:
-    # 1) Создаём raw-пути для всех аналоговых камер с активными streams
+    # 1) Создаём raw-пути для ВСЕХ камер
     for cam_cfg in cameras_cfg:
         cam_id = cam_cfg.get("id")
-        cam_type = cam_cfg.get("type", "ip")
-        if not needs_loopback(cam_id, cam_type, streams_cfg):
-            continue
         raw_name = raw_path_name(cam_id)
         fake_cam = SimpleNamespace(
             id=cam_id,
-            type=cam_type,
+            type=cam_cfg.get("type", "ip"),
             source=cam_cfg["source"],
             fps=cam_cfg.get("fps", 25),
-            audio=cam_cfg.get("audio", True),
+            audio=cam_cfg.get("audio", False),
         )
         try:
             mediamtx.add_path(
@@ -163,11 +164,12 @@ if mediamtx:
         except Exception as e:
             logger.error("Не удалось создать raw-путь для %s: %s", cam_id, e)
 
+    # 2) Ждём готовности всех raw-потоков (до 15 сек на каждый)
     if loopback_urls:
-        logger.info("Ожидаю готовности raw-потоков (до 10 сек)...")
+        logger.info("Ожидаю готовности raw-потоков...")
         for cam_id in list(loopback_urls.keys()):
             raw_name = raw_path_name(cam_id)
-            deadline = time.time() + 10
+            deadline = time.time() + 15
             while time.time() < deadline:
                 st = mediamtx.get_path_status(raw_name)
                 if st and st.get("ready"):
@@ -175,9 +177,12 @@ if mediamtx:
                     break
                 time.sleep(0.5)
             else:
-                logger.warning("Raw-поток не готов за 10 сек: %s", raw_name)
+                logger.warning(
+                    "Raw-поток не готов за 15 сек: %s — "
+                    "камера будет недоступна", raw_name,
+                )
 
-    # 2) Восстанавливаем пользовательские потоки из config.yaml
+    # 3) Восстанавливаем пользовательские потоки из config.yaml
     for stream_cfg in streams_cfg:
         if not stream_cfg.get("enabled", True):
             continue
@@ -296,9 +301,7 @@ def logout():
     auth_mod.do_logout()
     return redirect(url_for("login"))
 
-# ======================================================================
-#  favicon.ico
-# ======================================================================
+
 @app.route("/favicon.ico")
 def favicon():
     from flask import send_file
@@ -306,6 +309,7 @@ def favicon():
         RES_DIR / "static" / "favicon.ico",
         mimetype="image/x-icon",
     )
+
 
 # ======================================================================
 #  Главная

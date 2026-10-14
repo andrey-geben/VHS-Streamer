@@ -2,30 +2,60 @@
 """
 PyInstaller spec для VHS-Streamer.
 
-Собираем в режиме --onedir (папка), не --onefile:
-    * .exe стартует мгновенно (не нужно распаковывать каждый раз);
+Сборка в режиме --onedir (папка):
+    * .exe стартует мгновенно;
     * можно обновлять отдельные файлы без пересборки;
     * удобнее отладка.
 """
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import (
+    collect_submodules,
+    collect_data_files,
+    collect_dynamic_libs,
+)
 
 # Корень проекта
 ROOT = Path(SPECPATH).resolve()
 
-# --- Собираем данные, которые должны попасть внутрь .exe ---
+# --- Шаблоны и статика (внутрь _MEIPASS) ---
 datas = [
-    # Шаблоны (только для чтения, внутрь _MEIPASS)
     (str(ROOT / "templates"), "templates"),
     (str(ROOT / "static"), "static"),
 ]
 
-# Скрытые импорты — PyInstaller не всегда видит их сам
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+# --- NumPy: собираем всё, что PyInstaller может пропустить ---
+# Начиная с numpy 2.3.0 некоторые подмодули не подхватываются автоматически.
+try:
+    numpy_datas = collect_data_files("numpy")
+    numpy_binaries = collect_dynamic_libs("numpy")
+    numpy_hiddenimports = collect_submodules("numpy")
+    datas += numpy_datas
+except Exception:
+    numpy_datas = []
+    numpy_binaries = []
+    numpy_hiddenimports = []
 
+# --- OpenCV: те же проблемы ---
+try:
+    opencv_datas = collect_data_files("cv2")
+    opencv_binaries = collect_dynamic_libs("cv2")
+    opencv_hiddenimports = collect_submodules("cv2")
+    datas += opencv_datas
+except Exception:
+    opencv_datas = []
+    opencv_binaries = []
+    opencv_hiddenimports = []
+
+# --- Скрытые импорты ---
 hiddenimports = [
+    "numpy",
+    "numpy._core",
+    "numpy._core._exceptions",
+    "numpy._core._multiarray_umath",
+    "numpy._core._multiarray_tests",
+    "numpy._core._dtype_ctypes",
     "cv2",
     "yaml",
     "requests",
@@ -33,38 +63,30 @@ hiddenimports = [
     "werkzeug",
     "jinja2",
     "PIL",
-    "numpy",
-    "numpy._core",
-    "numpy._core._exceptions",
-    "numpy._core._multiarray_umath",
+    "helper",
+    "__version__",
+    "audio_probe",
+    "preview",
+    "transcode",
+    "mediamtx_manager",
+    "diagnostics",
 ]
-hiddenimports += collect_submodules("numpy")
+hiddenimports += numpy_hiddenimports
+hiddenimports += opencv_hiddenimports
 
-# Пытаемся подключить imageio-ffmpeg, если используется
-try:
-    hiddenimports += collect_submodules("imageio_ffmpeg")
-except Exception:
-    pass
+binaries = numpy_binaries + opencv_binaries
 
-# ONNX Runtime (если понадобится в будущем)
-try:
-    hiddenimports += collect_submodules("onnxruntime")
-except Exception:
-    pass
-
-datas = datas + collect_data_files("numpy")
 
 a = Analysis(
     ["app.py"],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Не тащим лишнее
         "tkinter",
         "matplotlib",
         "PyQt5",
@@ -90,14 +112,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,          # UPX часто ломает OpenCV DLL
-    console=True,       # True — видно консоль с логами
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-     icon=str(ROOT / "icon.ico"),
+    upx=False,
+    console=True,
+    icon=str(ROOT / "icon.ico"),
+    version=str(ROOT / "version_info.txt"),
 )
 
 coll = COLLECT(
@@ -106,6 +124,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    upx_exclude=[],
     name="VHS-Streamer",
 )

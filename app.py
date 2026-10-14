@@ -17,6 +17,20 @@ from flask import (
 )
 
 # ----------------------------------------------------------------------
+# Авторство и версия
+# ----------------------------------------------------------------------
+from __version__ import (
+    APP_NAME,
+    APP_TITLE,
+    APP_FOOTER,
+    __version__,
+    __author__,
+    __copyright__,
+    __license__,
+    __url__,
+)
+
+# ----------------------------------------------------------------------
 # Пути и логирование
 # ----------------------------------------------------------------------
 from helper import app_dir, resource_dir
@@ -49,6 +63,11 @@ logging.basicConfig(
     level=logging.INFO, handlers=[_console, _file], force=True,
 )
 logger = logging.getLogger("vhs-streamer")
+
+# --- Баннер авторства в логе ---
+logger.info("=" * 60)
+logger.info(APP_FOOTER)
+logger.info("=" * 60)
 logger.info("Логи пишутся в: %s", LOG_FILE)
 
 
@@ -279,6 +298,9 @@ def human_size(num_bytes: float) -> str:
 
 app.jinja_env.globals["archive_root"] = archive_root
 app.jinja_env.globals["human_size"] = human_size
+app.jinja_env.globals["APP_FOOTER"] = APP_FOOTER
+app.jinja_env.globals["APP_NAME"] = APP_NAME
+app.jinja_env.globals["APP_VERSION"] = __version__
 
 
 # ======================================================================
@@ -308,6 +330,25 @@ def favicon():
     return send_file(
         RES_DIR / "static" / "favicon.ico",
         mimetype="image/x-icon",
+    )
+
+
+# ======================================================================
+#  О программе
+# ======================================================================
+@app.route("/about")
+@auth_mod.login_required
+def about_page():
+    return render_template(
+        "about.html",
+        user=g.user,
+        info={
+            "version": __version__,
+            "author": __author__,
+            "copyright": __copyright__,
+            "license": __license__,
+            "url": __url__,
+        },
     )
 
 
@@ -426,6 +467,11 @@ def archive_file(camera_id: str, date: str, filename: str):
 @auth_mod.login_required
 def api_status():
     return jsonify({
+        "app": {
+            "name": APP_NAME,
+            "version": __version__,
+            "author": __author__,
+        },
         "cameras": [c.get_status() for c in cameras.values()],
         "recorders": {cid: r.get_status() for cid, r in recorders.items()},
         "mediamtx": {

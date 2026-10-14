@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}О программе — VHS-Streamer{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:640px; margin:0 auto">
+    <h2 style="margin-top:0">О программе</h2>
+
+    <table style="width:100%">
+        <tr>
+            <td style="width:40%; color:#8b96a5">Название</td>
+            <td><b>VHS-Streamer</b></td>
+        </tr>
+        <tr>
+            <td style="color:#8b96a5">Версия</td>
+            <td><b>{{ info.version }}</b></td>
+        </tr>
+        <tr>
+            <td style="color:#8b96a5">Автор</td>
+            <td><b>{{ info.author }}</b></td>
+        </tr>
+        <tr>
+            <td style="color:#8b96a5">Copyright</td>
+            <td>{{ info.copyright }}</td>
+        </tr>
+        <tr>
+            <td style="color:#8b96a5">Лицензия</td>
+            <td>{{ info.license }}</td>
+        </tr>
+        <tr>
+            <td style="color:#8b96a5">Сайт</td>
+            <td>
+                <a href="{{ info.url }}" target="_blank"
+                   style="color:#6cb2ff">{{ info.url }}</a>
+            </td>
+        </tr>
+    </table>
+
+    <h3 style="margin-top:24px">Технологии</h3>
+    <ul class="muted" style="line-height:1.8">
+        <li>Python 3.12, Flask 3.0</li>
+        <li>OpenCV 4.10, NumPy</li>
+        <li>MediaMTX — RTSP-сервер</li>
+        <li>FFmpeg — кодирование и транскодирование</li>
+        <li>ONNX Runtime (в планах)</li>
+        <li>PyInstaller — сборка .exe</li>
+    </ul>
+
+    <h3 style="margin-top:24px">Лицензионное соглашение</h3>
+    <p class="muted" style="line-height:1.6">
+        Программное обеспечение является собственностью автора.
+        Любое копирование, распространение, модификация или использование
+        без письменного разрешения автора запрещены.
+    </p>
+    <p class="muted" style="line-height:1.6">
+        ПО предоставляется «как есть», без каких-либо гарантий.
+        Автор не несёт ответственности за любой ущерб, возникший
+        в результате использования программы.
+    </p>
+</div>
+
+{% endblock %}

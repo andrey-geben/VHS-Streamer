@@ -4,7 +4,6 @@
 
 <h2 style="margin-top:0">Настройки системы</h2>
 
-<!-- ============= КАМЕРЫ ============= -->
 <div class="card">
     <h3 style="margin-top:0; display:flex; justify-content:space-between; align-items:center">
         Камеры
@@ -27,7 +26,6 @@
     </table>
 </div>
 
-<!-- ============= АРХИВ ============= -->
 <div class="card">
     <h3 style="margin-top:0">Архив (циклическая запись)</h3>
     <div class="form-row"><label>Включён</label>
@@ -52,7 +50,6 @@
     <p class="muted">Изменение пути архива требует перезапуска сервера.</p>
 </div>
 
-<!-- ============= ПОТОКИ RTSP (ДУБЛИРОВАНИЕ) ============= -->
 <div class="card" id="streams-card">
     <h3 style="margin-top:0">Дублирование потока (RTSP через MediaMTX)</h3>
     <p class="muted">
@@ -66,14 +63,60 @@
             <option value="">— выберите камеру —</option>
         </select>
     </div>
+
     <div class="form-row">
         <label>Транскодировать</label>
-        <input type="checkbox" id="stream-transcode">
+        <input type="checkbox" id="stream-transcode"
+               onchange="updateTranscodeBlock()">
         <span class="muted" style="margin-left:8px">
-            для мобильного интернета (640×360, 500 kbps, 15 fps)
+            если нужно снизить качество / битрейт для удалённого клиента
         </span>
     </div>
-    <button class="btn" onclick="createStream()">+ Создать поток</button>
+
+    <div id="transcode-block" style="display:none;
+                                     background:#14161a;
+                                     border:1px solid #2a2f37;
+                                     border-radius:6px;
+                                     padding:14px;
+                                     margin-top:8px;">
+
+        <div class="form-row">
+            <label>Кодек</label>
+            <select id="tc-codec" style="flex:1" onchange="updateLoadEstimate()">
+                <option value="libx264">libx264 (CPU) — загрузка</option>
+            </select>
+            <span class="muted" id="tc-codec-note" style="margin-left:8px; font-size:0.85em"></span>
+        </div>
+
+        <div class="form-row" style="align-items:flex-start">
+            <label style="padding-top:6px">Пресет</label>
+            <div id="tc-presets" style="display:flex; flex-wrap:wrap; gap:6px; flex:1"></div>
+        </div>
+
+        <div class="form-row" style="display:grid;
+                                      grid-template-columns:1fr 1fr 1fr;
+                                      gap:8px">
+            <div>
+                <label style="font-size:0.85em">Битрейт</label>
+                <input type="text" id="tc-bitrate" value="600k"
+                       style="width:100%" onchange="updateLoadEstimate()">
+            </div>
+            <div>
+                <label style="font-size:0.85em">Разрешение (scale)</label>
+                <input type="text" id="tc-scale" value="640:-2"
+                       style="width:100%" onchange="updateLoadEstimate()">
+            </div>
+            <div>
+                <label style="font-size:0.85em">FPS</label>
+                <input type="number" id="tc-fps" value="15" min="1" max="60"
+                       style="width:100%" onchange="updateLoadEstimate()">
+            </div>
+        </div>
+
+        <div id="tc-load" class="muted" style="margin-top:8px; font-size:0.9em"></div>
+    </div>
+
+    <button class="btn" onclick="createStream()" style="margin-top:12px">+ Создать поток</button>
 
     <div id="streams-load-warning" class="muted" style="margin-top:8px"></div>
 
@@ -84,7 +127,7 @@
                 <th style="width:12%">ID</th>
                 <th style="width:14%">Камера</th>
                 <th>RTSP-адреса для копирования</th>
-                <th style="width:12%">Тип</th>
+                <th style="width:18%">Тип</th>
                 <th style="width:12%">Статус</th>
                 <th style="width:8%">Действия</th>
             </tr>
@@ -93,7 +136,6 @@
     </table>
 </div>
 
-<!-- ============= ДИАГНОСТИКА ============= -->
 <div class="card">
     <h3 style="margin-top:0">Диагностика</h3>
     <p class="muted">
@@ -107,7 +149,6 @@
 </div>
 
 {% if user and user.role == 'admin' %}
-<!-- ============= БЕЗОПАСНОСТЬ ============= -->
 <div class="card" id="security-card">
     <h3 style="margin-top:0">Безопасность</h3>
     <p class="muted">Раздел виден только администраторам.</p>
@@ -130,7 +171,6 @@
 </div>
 {% endif %}
 
-<!-- ============= МОДАЛКА КАМЕРЫ ============= -->
 <div id="camera-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100;">
     <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:560px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
         <h3 style="margin-top:0" id="modal-title">Камера</h3>
@@ -190,7 +230,7 @@
 </div>
 
 <script>
-async function api(method, url, body) {
+    async function api(method, url, body) {
     const opts = { method, headers: { 'Accept': 'application/json' } };
     if (body !== undefined) {
         opts.headers['Content-Type'] = 'application/json';
@@ -236,6 +276,8 @@ async function copyText(text) {
 
 let camerasList = [];
 let allStreams = [];
+let transcodeCodecs = null;
+let selectedPresetId = 'mobile';
 const MAX_PER_CAMERA = 3;
 
 async function loadCameras() {
@@ -448,6 +490,121 @@ async function saveArchive() {
     } catch (e) {}
 }
 
+async function loadTranscodeCodecs() {
+    try {
+        const data = await api('GET', '/api/transcode/codecs');
+        transcodeCodecs = data;
+
+        const sel = document.getElementById('tc-codec');
+        sel.innerHTML = '';
+        (data.available || []).forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.name;
+            opt.textContent = c.label;
+            sel.appendChild(opt);
+        });
+        if (data.recommended) sel.value = data.recommended;
+
+        updateCodecNote();
+        renderPresetButtons(data.presets || []);
+        selectedPresetId = 'mobile';
+        applyPreset('mobile');
+    } catch (e) {
+        console.error('loadTranscodeCodecs failed:', e);
+    }
+}
+
+function updateCodecNote() {
+    const note = document.getElementById('tc-codec-note');
+    if (!transcodeCodecs) { note.textContent = ''; return; }
+    const sel = document.getElementById('tc-codec').value;
+    const found = (transcodeCodecs.available || []).find(c => c.name === sel);
+    if (found && found.type === 'gpu') {
+        note.textContent = '✓ аппаратное кодирование';
+        note.style.color = '#57d87a';
+    } else {
+        note.textContent = '⚠ нагрузка на CPU';
+        note.style.color = '#f5b944';
+    }
+    updateLoadEstimate();
+}
+
+function renderPresetButtons(presets) {
+    const container = document.getElementById('tc-presets');
+    container.innerHTML = '';
+    presets.forEach(p => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn secondary';
+        btn.dataset.presetId = p.id;
+        btn.textContent = p.label;
+        btn.style.padding = '6px 12px';
+        btn.style.fontSize = '0.85em';
+        btn.onclick = () => {
+            selectedPresetId = p.id;
+            applyPreset(p.id);
+        };
+        container.appendChild(btn);
+    });
+}
+
+function applyPreset(presetId) {
+    if (!transcodeCodecs) return;
+    const preset = (transcodeCodecs.presets || []).find(p => p.id === presetId);
+    if (!preset) return;
+
+    document.getElementById('tc-bitrate').value = preset.bitrate || '';
+    document.getElementById('tc-scale').value = preset.scale || '';
+    document.getElementById('tc-fps').value = preset.fps || 25;
+
+    document.querySelectorAll('#tc-presets button').forEach(b => {
+        if (b.dataset.presetId === presetId) {
+            b.className = 'btn';
+        } else {
+            b.className = 'btn secondary';
+        }
+    });
+
+    updateLoadEstimate();
+}
+
+function updateLoadEstimate() {
+    const scale = document.getElementById('tc-scale').value || '640:-2';
+    const fps = parseInt(document.getElementById('tc-fps').value) || 15;
+    const codec = document.getElementById('tc-codec').value;
+
+    let targetH = 360;
+    try {
+        const w = parseInt(scale.split(':')[0]);
+        if (!isNaN(w)) targetH = Math.round(w * 9 / 16);
+    } catch (e) {}
+
+    let cpuPct;
+    if (codec === 'libx264') {
+        cpuPct = Math.round(targetH * fps / 25 * 0.08);
+    } else {
+        cpuPct = 3;
+    }
+    cpuPct = Math.max(cpuPct, 1);
+
+    const el = document.getElementById('tc-load');
+    let color = '#57d87a';
+    let level = 'низкая';
+    if (cpuPct > 80) { color = '#f16a6a'; level = 'критическая'; }
+    else if (cpuPct > 40) { color = '#f5b944'; level = 'средняя'; }
+    else if (cpuPct > 15) { color = '#f5b944'; level = 'умеренная'; }
+
+    el.innerHTML =
+        `Оценка нагрузки: <span style="color:${color}">${level}</span> ` +
+        `(~${cpuPct}% одного ядра CPU) · ${targetH}p × ${fps} fps`;
+}
+
+function updateTranscodeBlock() {
+    const on = document.getElementById('stream-transcode').checked;
+    document.getElementById('transcode-block').style.display = on ? 'block' : 'none';
+    if (on) updateCodecNote();
+}
+
 function streamsCountFor(cameraId) {
     return allStreams.filter(s => s.camera_id === cameraId).length;
 }
@@ -498,9 +655,19 @@ async function loadStreams() {
         const runtime = s.runtime || {};
         const ready = runtime.ready;
         const readers = (runtime.readers || []).length;
-        const typeLabel = s.copy
-            ? '<span class="status-on">copy</span>'
-            : '<span class="status-off">transcode</span>';
+
+        let typeLabel;
+        if (s.copy) {
+            typeLabel = '<span class="status-on">copy</span>';
+        } else {
+            const parts = [];
+            if (s.codec) parts.push(s.codec);
+            if (s.scale) parts.push(s.scale);
+            if (s.bitrate) parts.push(s.bitrate);
+            if (s.fps) parts.push(s.fps + 'fps');
+            typeLabel = '<span class="status-off">' + escapeHtml(parts.join(' · ')) + '</span>';
+        }
+
         const stateLabel = s.enabled
             ? (ready ? '<span class="status-on">● готов' + (readers ? ' (' + readers + ')' : '') + '</span>' : '<span class="muted">○ ожидание</span>')
             : '<span class="muted">○ выключен</span>';
@@ -528,18 +695,33 @@ async function loadStreams() {
     });
 }
 
+function buildTranscodePayload() {
+    return {
+        codec: document.getElementById('tc-codec').value,
+        bitrate: document.getElementById('tc-bitrate').value.trim() || '600k',
+        scale: document.getElementById('tc-scale').value.trim() || '640:-2',
+        fps: parseInt(document.getElementById('tc-fps').value) || 15,
+    };
+}
+
 async function createStream() {
     const cameraId = document.getElementById('stream-camera').value;
     if (!cameraId) { showToast('Выберите камеру', true); return; }
     const transcode = document.getElementById('stream-transcode').checked;
+    const transcodePayload = transcode ? buildTranscodePayload() : null;
+
     const existing = streamsFor(cameraId);
     if (existing.length >= MAX_PER_CAMERA) {
         const cam = camerasList.find(c => c.id === cameraId) || { name: cameraId };
-        showLimitModal(cameraId, cam.name, existing, transcode);
+        showLimitModal(cameraId, cam.name, existing, transcode, transcodePayload);
         return;
     }
+
+    const payload = { camera_id: cameraId, transcode: transcode };
+    if (transcodePayload) Object.assign(payload, transcodePayload);
+
     try {
-        const r = await api('POST', '/api/streams', { camera_id: cameraId, transcode: transcode });
+        const r = await api('POST', '/api/streams', payload);
         showToast('Поток создан: ' + r.stream.path);
         await loadStreams();
         await loadStreamCameras();
@@ -566,8 +748,8 @@ async function toggleStream(id) {
 
 let _limitContext = null;
 
-function showLimitModal(cameraId, cameraName, streams, transcode) {
-    _limitContext = { cameraId, transcode };
+function showLimitModal(cameraId, cameraName, streams, transcode, transcodePayload) {
+    _limitContext = { cameraId, transcode, transcodePayload };
     document.getElementById('limit-camera-name').textContent = cameraName;
     const list = document.getElementById('limit-streams-list');
     list.innerHTML = '';
@@ -592,12 +774,14 @@ function closeLimitModal() {
 
 async function replaceStream(removeStreamId) {
     if (!_limitContext) return;
-    const { cameraId, transcode } = _limitContext;
+    const { cameraId, transcode, transcodePayload } = _limitContext;
     if (!confirm('Заменить поток ' + removeStreamId + '?')) return;
     try {
         await api('DELETE', '/api/streams/' + encodeURIComponent(removeStreamId));
         await new Promise(r => setTimeout(r, 300));
-        const r = await api('POST', '/api/streams', { camera_id: cameraId, transcode: transcode });
+        const payload = { camera_id: cameraId, transcode: transcode };
+        if (transcode && transcodePayload) Object.assign(payload, transcodePayload);
+        const r = await api('POST', '/api/streams', payload);
         showToast('Поток заменён: ' + r.stream.path);
         closeLimitModal();
         await loadStreams();
@@ -675,6 +859,7 @@ document.getElementById('m-type').addEventListener('change', updateAudioRowVisib
     const steps = [
         ['loadCameras', loadCameras],
         ['loadArchive', loadArchive],
+        ['loadTranscodeCodecs', loadTranscodeCodecs],
         ['loadStreams', loadStreams],
         ['loadStreamCameras', loadStreamCameras],
     ];

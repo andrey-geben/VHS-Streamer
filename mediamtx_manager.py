@@ -35,6 +35,27 @@ def _quote(s: str) -> str:
     return s
 
 
+def build_ip_passthrough_no_audio_cmd(camera) -> str:
+    """
+    FFmpeg-команда для IP-камеры с выключенным аудио.
+    Видео копируется без перекодирования (-c:v copy),
+    аудио отключается (-an). Нагрузка на CPU — почти нулевая.
+    """
+    input_args = f"-rtsp_transport tcp -i {_quote(camera.source)}"
+    rtsp_out = (
+        f"-f rtsp -rtsp_transport tcp "
+        f"-pkt_size 800 "
+        f"-muxdelay 0 -muxpreload 0 "
+        f"rtsp://localhost:{RTSP_PORT}/$MTX_PATH"
+    )
+    return (
+        f'"{FFMPEG_PATH}" -nostdin -loglevel warning '
+        f"{input_args} "
+        f"-c:v copy -an "
+        f"{rtsp_out}"
+    )
+
+
 def build_raw_publisher_cmd(camera) -> str:
     """FFmpeg-команда для чтения физической камеры и публикации в raw-путь."""
     # --- Вход ---
@@ -60,7 +81,7 @@ def build_raw_publisher_cmd(camera) -> str:
     else:
         input_args = f"-rtsp_transport tcp -i {_quote(camera.source)}"
 
-    # --- Кодек: пробуем аппаратный, иначе libx264 ---
+    # --- Кодек ---
     try:
         from transcode import get_loopback_codec
         codec = get_loopback_codec()
@@ -69,7 +90,6 @@ def build_raw_publisher_cmd(camera) -> str:
 
     logger.info("[%s] Loopback-кодек: %s", camera.id, codec)
 
-    # --- Параметры энкодера ---
     if codec == "h264_nvenc":
         encode = (
             "-c:v h264_nvenc -preset p4 -tune ll "
@@ -93,7 +113,6 @@ def build_raw_publisher_cmd(camera) -> str:
             "-g 25"
         )
     else:
-        # libx264 (CPU)
         encode = (
             "-c:v libx264 -preset veryfast "
             "-profile:v main -pix_fmt yuv420p "
@@ -101,9 +120,6 @@ def build_raw_publisher_cmd(camera) -> str:
             "-g 25 -bf 0 -sc_threshold 0"
         )
 
-    # --- RTSP-выход ---
-    # -muxdelay 0 -muxpreload 0: без буферизации при мультиплексировании
-    # (уменьшает задержку в VLC с ~0.3 до ~0.1 сек)
     rtsp_out = (
         f"-f rtsp -rtsp_transport tcp "
         f"-pkt_size 800 "
@@ -123,19 +139,19 @@ def build_raw_publisher_cmd(camera) -> str:
 def build_transcode_cmd(stream_cfg: dict) -> str:
     """
     FFmpeg-команда для транскодирования из raw-потока в пользовательский.
-    Поддерживает libx264 (CPU) и GPU-кодеки: NVENC, QSV, AMF.
+    Аудио: если stream_cfg['audio'] = True — копируется без перекодирования.
     """
     codec = stream_cfg.get("codec", "libx264")
     bitrate = stream_cfg.get("bitrate", "1000k")
     scale = stream_cfg.get("scale")
     fps = stream_cfg.get("fps")
+    audio = bool(stream_cfg.get("audio", False))
 
     input_args = (
         f"-rtsp_transport tcp "
         f"-i rtsp://localhost:{RTSP_PORT}/{stream_cfg['_raw_path']}"
     )
 
-    # Видеофильтры (масштаб, fps)
     vf = []
     if scale:
         vf.append(f"scale={scale}")
@@ -143,7 +159,6 @@ def build_transcode_cmd(stream_cfg: dict) -> str:
         vf.append(f"fps={fps}")
     vf_arg = f"-vf \"{','.join(vf)}\" " if vf else ""
 
-    # Параметры под конкретный кодек
     if codec == "libx264":
         encode = (
             f"-c:v libx264 -preset ultrafast -tune zerolatency "
@@ -178,6 +193,9 @@ def build_transcode_cmd(stream_cfg: dict) -> str:
             f"-b:v {bitrate} -g 25"
         )
 
+    # Аудио: копируем без перекодирования, если включено
+    audio_args = "-c:a copy" if audio else "-an"
+
     rtsp_out = (
         f"-f rtsp -rtsp_transport tcp -pkt_size 800 "
         f"-muxdelay 0 -muxpreload 0 "
@@ -188,7 +206,7 @@ def build_transcode_cmd(stream_cfg: dict) -> str:
     return (
         f'"{FFMPEG_PATH}" -nostdin -loglevel warning '
         f"{input_args} "
-        f"{vf_arg}{encode} -an "
+        f"{vf_arg}{encode} {audio_args} "
         f"{rtsp_out}"
     )
 
@@ -328,16 +346,31 @@ class MediaMTXManager:
 def build_raw_path_config(camera) -> dict:
     """
     Конфиг raw-пути для MediaMTX.
-    - IP-камера: source = rtsp://... (MediaMTX читает напрямую).
-    - Аналоговая: source = publisher + runOnInit с FFmpeg.
+
+    - IP-камера с включённым аудио: source = rtsp://... — MediaMTX сам
+      читает поток (видео + аудио, если есть).
+    - IP-камера с выключенным аудио: runOnInit с FFmpeg — видео копируется
+      (-c:v copy), аудио убирается (-an). Нагрузка на CPU — минимальна.
+    - Аналоговая камера: runOnInit с FFmpeg (видео кодируется, аудио нет).
     """
     if camera.type == "ip":
-        return {
-            "source": camera.source,
-            "sourceOnDemand": True,
-            "sourceOnDemandCloseAfter": "10s",
-            "rtspTransport": "tcp",
-        }
+        audio = getattr(camera, "audio", True)
+        if audio:
+            return {
+                "source": camera.source,
+                "sourceOnDemand": True,
+                "sourceOnDemandCloseAfter": "10s",
+                "rtspTransport": "tcp",
+            }
+        else:
+            cmd = build_ip_passthrough_no_audio_cmd(camera)
+            return {
+                "source": "publisher",
+                "runOnInit": cmd,
+                "runOnInitRestart": True,
+            }
+
+    # Аналоговая камера — публикация через FFmpeg
     cmd = build_raw_publisher_cmd(camera)
     return {
         "source": "publisher",

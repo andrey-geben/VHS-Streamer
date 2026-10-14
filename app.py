@@ -153,6 +153,7 @@ if mediamtx:
             type=cam_type,
             source=cam_cfg["source"],
             fps=cam_cfg.get("fps", 25),
+            audio=cam_cfg.get("audio", True),
         )
         try:
             mediamtx.add_path(

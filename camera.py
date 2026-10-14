@@ -53,6 +53,11 @@ class Camera:
 
         self._subscribers: list = []
         self._sub_lock = threading.Lock()
+        # --- Аудио (только для IP-камер) ---
+        # has_audio: None = не проверено, True/False = результат FFprobe
+        self.has_audio: bool | None = config.get("has_audio")
+        # audio: включён ли захват звука (имеет смысл только если has_audio=True)
+        self.audio: bool = bool(config.get("audio", False))
 
     # ------------------------------------------------------------------
     # Подписчики (для рекордера)

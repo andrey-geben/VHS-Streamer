@@ -60,17 +60,19 @@ archive:
   record_all: true
 
 cameras:
-  - id: analog_1
-    name: "Встроенная камера"
-    type: analog
-    source: "HD User Facing"
-    capture_index: 0
+  - id: ip_1
+    name: "IP камера — Вход"
+    type: ip
+    source: "rtsp://user:pass@192.168.1.100:554/stream1"
     fps: 25
-    width: 720
-    height: 576
+    width: 1280
+    height: 720
     record: true
-    transport: null
+    transport: "tcp"
     open_timeout_ms: 5000
     read_timeout_ms: 5000
+    # --- Аудио ---
+    has_audio: null      # заполняется автоматически при проверке
+    audio: false         # захватывать звук (только если has_audio: true)
 
 streams: []

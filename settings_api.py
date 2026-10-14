@@ -143,6 +143,8 @@ def _camera_to_dict(cam: Camera) -> dict:
         "transport": cam.transport,
         "open_timeout_ms": cam.open_timeout_ms,
         "read_timeout_ms": cam.read_timeout_ms,
+        "has_audio": cam.has_audio,
+        "audio": cam.audio,
         "connected": cam._connected,
         "last_error": cam._last_error,
     }
@@ -179,6 +181,16 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
             except (TypeError, ValueError):
                 return {}, "capture_index должен быть целым числом"
 
+    # Аудио — только для IP-камер
+    has_audio = None
+    audio = False
+    if ctype == "ip":
+        ha = payload.get("has_audio")
+        if ha in (True, False):
+            has_audio = bool(ha)
+        # audio имеет смысл только если звук реально есть
+        audio = bool(payload.get("audio", False)) and (has_audio is True)
+
     cfg = {
         "id": cam_id,
         "name": str(payload["name"]).strip(),
@@ -192,6 +204,8 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
         "transport": payload.get("transport") or None,
         "open_timeout_ms": int(payload.get("open_timeout_ms", 5000)),
         "read_timeout_ms": int(payload.get("read_timeout_ms", 5000)),
+        "has_audio": has_audio,
+        "audio": audio,
     }
     return cfg, ""
 
@@ -550,3 +564,47 @@ def api_restart_camera(camera_id: str):
     cam.stop()
     cam.start()
     return jsonify({"ok": True})
+
+# ----------------------------------------------------------------------
+# API: проверка наличия аудио в потоке IP-камеры
+# ----------------------------------------------------------------------
+@settings_bp.route("/api/cameras/<camera_id>/probe_audio", methods=["POST"])
+@admin_required
+def api_probe_audio(camera_id: str):
+    """
+    Запускает ffprobe и проверяет, есть ли аудиодорожка в потоке камеры.
+    Результат сохраняется в config.yaml как has_audio.
+    Если звука нет — флаг audio принудительно сбрасывается.
+    """
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+    if cam.type != "ip":
+        return jsonify({"error": "Проверка звука доступна только для IP-камер"}), 400
+
+    from audio_probe import probe_audio
+
+    logger.info("[%s] Проверяю наличие аудио в потоке...", camera_id)
+    has_audio = probe_audio(cam.source)
+    logger.info("[%s] Результат проверки аудио: has_audio=%s",
+                camera_id, has_audio)
+
+    # Обновляем объект в памяти
+    cam.has_audio = has_audio
+    if not has_audio:
+        cam.audio = False
+
+    # Обновляем config.yaml
+    cfg = _find_camera_cfg(st["config"], camera_id)
+    if cfg:
+        cfg["has_audio"] = has_audio
+        if not has_audio:
+            cfg["audio"] = False
+        _save_config(st["config"], st["config_path"])
+
+    return jsonify({
+        "ok": True,
+        "has_audio": has_audio,
+        "audio": cam.audio,
+    })

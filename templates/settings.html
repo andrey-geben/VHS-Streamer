@@ -4,6 +4,50 @@
 
 <h2 style="margin-top:0">Настройки системы</h2>
 
+<!-- ============= ONVIF ============= -->
+<div class="card" id="onvif-card">
+    <h3 style="margin-top:0">ONVIF</h3>
+    <p class="muted">
+        Автоматическое обнаружение IP-камер в локальной сети через протокол ONVIF.
+        Нажмите «Найти камеры» — система просканирует сеть и покажет список
+        устройств. Для подключения к камере нужны логин и пароль, которые
+        вы задавали при её настройке.
+    </p>
+
+    <div class="form-row">
+        <button class="btn" onclick="onvifDiscover()" id="btn-onvif-discover">
+            🔍 Найти ONVIF-камеры
+        </button>
+        <span class="muted" id="onvif-status" style="margin-left:10px; font-size:0.9em"></span>
+    </div>
+
+    <div class="form-row" style="margin-top:10px">
+        <label style="font-size:0.9em">Если камера не найдена автоматически — введите endpoint вручную</label>
+    </div>
+    <div class="form-row">
+        <input type="text" id="onvif-manual-ep"
+               placeholder="http://192.168.1.100/onvif/device_service"
+               style="flex:1">
+        <button class="btn secondary" onclick="openOnvifModalManual()"
+                style="margin-left:8px">Подключить вручную</button>
+    </div>
+
+    <div id="onvif-results" style="display:none; margin-top:14px">
+        <table id="onvif-table">
+            <thead>
+                <tr>
+                    <th>IP</th>
+                    <th>Имя / Модель</th>
+                    <th>Endpoint</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ============= КАМЕРЫ ============= -->
 <div class="card">
     <h3 style="margin-top:0; display:flex; justify-content:space-between; align-items:center">
         Камеры
@@ -15,9 +59,11 @@
                 <th>ID</th>
                 <th>Название</th>
                 <th>Тип</th>
+                <th>Вендор</th>
                 <th>Источник</th>
                 <th>Индекс</th>
                 <th>Аудио</th>
+                <th>Архив</th>
                 <th>Статус</th>
                 <th>Действия</th>
             </tr>
@@ -26,12 +72,17 @@
     </table>
 </div>
 
+<!-- ============= АРХИВ ============= -->
 <div class="card">
     <h3 style="margin-top:0">Архив (циклическая запись)</h3>
     <div class="form-row"><label>Включён</label>
         <input type="checkbox" id="arch-enabled"></div>
-    <div class="form-row"><label>Путь архива</label>
-        <input type="text" id="arch-path"></div>
+    <div class="form-row"><label>Путь архива (общий)</label>
+        <input type="text" id="arch-path" placeholder="./archive"></div>
+    <p class="muted" style="margin-top:-4px; margin-bottom:12px">
+        Индивидуальный путь для каждой камеры задаётся в её настройках
+        (галочка «Писать в архив»).
+    </p>
     <div class="form-row"><label>Длина сегмента (мин)</label>
         <input type="number" id="arch-segment" min="1" max="120"></div>
     <div class="form-row"><label>Лимит по размеру (ГБ)</label>
@@ -47,9 +98,10 @@
     <div class="form-row"><label>Расширение</label>
         <input type="text" id="arch-ext"></div>
     <button class="btn" onclick="saveArchive()">Сохранить</button>
-    <p class="muted">Изменение пути архива требует перезапуска сервера.</p>
+    <p class="muted">Изменение общего пути архива требует перезапуска сервера.</p>
 </div>
 
+<!-- ============= ПОТОКИ RTSP ============= -->
 <div class="card" id="streams-card">
     <h3 style="margin-top:0">Дублирование потока (RTSP через MediaMTX)</h3>
     <p class="muted">
@@ -136,6 +188,7 @@
     </table>
 </div>
 
+<!-- ============= ДИАГНОСТИКА ============= -->
 <div class="card">
     <h3 style="margin-top:0">Диагностика</h3>
     <p class="muted">
@@ -149,6 +202,7 @@
 </div>
 
 {% if user and user.role == 'admin' %}
+<!-- ============= БЕЗОПАСНОСТЬ ============= -->
 <div class="card" id="security-card">
     <h3 style="margin-top:0">Безопасность</h3>
     <p class="muted">Раздел виден только администраторам.</p>
@@ -171,8 +225,9 @@
 </div>
 {% endif %}
 
+<!-- ============= МОДАЛКА КАМЕРЫ ============= -->
 <div id="camera-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100;">
-    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:560px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
+    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:600px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
         <h3 style="margin-top:0" id="modal-title">Камера</h3>
         <div class="form-row"><label>ID (латиница)</label><input type="text" id="m-id"></div>
         <div class="form-row"><label>Название</label><input type="text" id="m-name"></div>
@@ -181,6 +236,46 @@
                 <option value="ip">IP (RTSP/HTTP)</option>
                 <option value="analog">Аналоговая (USB/карта)</option>
             </select></div>
+
+        <div id="m-ip-autofill" style="display:none;
+                                       background:#14161a;
+                                       border:1px solid #2a2f37;
+                                       border-radius:6px;
+                                       padding:12px;
+                                       margin-bottom:8px">
+            <div style="font-size:0.9em; color:#8b96a5; margin-bottom:8px">
+                Быстрое заполнение RTSP (Hikvision, Dahua, Reolink, Axis)
+            </div>
+
+            <div class="form-row">
+                <label>Вендор</label>
+                <select id="m-vendor" style="flex:1" onchange="onVendorChange()">
+                    <option value="">— выберите вендора —</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>IP-адрес</label>
+                <input type="text" id="m-ip" placeholder="192.168.1.100" style="flex:1">
+                <label style="margin-left:8px">Порт</label>
+                <input type="number" id="m-port" value="554" min="1" max="65535"
+                       style="width:80px; margin-left:8px">
+            </div>
+            <div class="form-row">
+                <label>Логин</label>
+                <input type="text" id="m-ip-user" placeholder="admin" style="flex:1">
+                <label style="margin-left:8px">Пароль</label>
+                <input type="password" id="m-ip-pass" style="flex:1; margin-left:8px">
+            </div>
+            <div class="form-row">
+                <label>Поток</label>
+                <select id="m-vendor-stream" style="flex:1">
+                    <option value="">— сначала выберите вендора —</option>
+                </select>
+                <button class="btn" type="button" style="margin-left:8px"
+                        onclick="autofillRtsp()">Сгенерировать URL</button>
+            </div>
+        </div>
+
         <div class="form-row"><label>Источник</label>
             <input type="text" id="m-source" placeholder="rtsp://... или имя dshow"></div>
         <div class="form-row">
@@ -209,8 +304,26 @@
                   style="margin-left:8px; font-size:0.85em"></span>
         </div>
 
-        <div class="form-row"><label>Писать в архив</label>
-            <input type="checkbox" id="m-record" checked></div>
+        <div class="form-row">
+            <label>Писать в архив</label>
+            <input type="checkbox" id="m-record" onchange="onRecordToggle()">
+            <span class="muted" style="margin-left:10px; font-size:0.85em">
+                по умолчанию выключено
+            </span>
+        </div>
+
+        <div class="form-row" id="row-archive-path" style="display:none">
+            <label>Путь архива</label>
+            <input type="text" id="m-archive-path"
+                   placeholder="Оставьте пустым — использовать общий путь"
+                   style="flex:1">
+        </div>
+        <p class="hint" id="archive-path-hint" style="display:none">
+            Укажите свою папку для этой камеры, если нужно писать в отдельное
+            место (например, на NAS или внешний диск). Если оставить пустым —
+            используется глобальный путь из раздела «Архив».
+        </p>
+
         <div style="text-align:right; margin-top:16px">
             <button class="btn secondary" onclick="closeCameraModal()">Отмена</button>
             <button class="btn" onclick="saveCamera()">Сохранить</button>
@@ -218,6 +331,7 @@
     </div>
 </div>
 
+<!-- ============= МОДАЛКА ЛИМИТА ПОТОКОВ ============= -->
 <div id="limit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:110;">
     <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:620px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
         <h3 style="margin-top:0; color:#f5b944">Достигнут лимит: 3 потока на камеру</h3>
@@ -225,6 +339,53 @@
         <div id="limit-streams-list" style="margin-top:14px"></div>
         <div style="text-align:right; margin-top:20px">
             <button class="btn secondary" onclick="closeLimitModal()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============= МОДАЛКА ONVIF ============= -->
+<div id="onvif-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:120;">
+    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:640px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
+        <h3 style="margin-top:0">Подключение к ONVIF-камере</h3>
+
+        <div class="form-row">
+            <label>Endpoint</label>
+            <input type="text" id="onvif-ep" readonly style="flex:1; color:#8b96a5">
+        </div>
+        <div class="form-row">
+            <label>Логин</label>
+            <input type="text" id="onvif-user" placeholder="admin" style="flex:1">
+        </div>
+        <div class="form-row">
+            <label>Пароль</label>
+            <input type="password" id="onvif-pass" placeholder="" style="flex:1">
+        </div>
+
+        <button class="btn" onclick="onvifProbe()" id="btn-onvif-probe">
+            Получить RTSP-адреса
+        </button>
+        <span class="muted" id="onvif-probe-status"
+              style="margin-left:10px; font-size:0.9em"></span>
+
+        <div id="onvif-probe-result" style="display:none; margin-top:14px">
+            <h4 style="margin-top:0">Информация об устройстве</h4>
+            <table id="onvif-device-info"></table>
+
+            <h4 style="margin-top:16px">Профили и RTSP-адреса</h4>
+            <table id="onvif-profiles">
+                <thead>
+                    <tr>
+                        <th>Профиль</th>
+                        <th>RTSP-адрес</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div style="text-align:right; margin-top:20px">
+            <button class="btn secondary" onclick="closeOnvifModal()">Закрыть</button>
         </div>
     </div>
 </div>
@@ -277,7 +438,10 @@ async function copyText(text) {
 let camerasList = [];
 let allStreams = [];
 let transcodeCodecs = null;
+let cameraVendors = null;
 let selectedPresetId = 'mobile';
+let _onvifDevices = [];
+let _onvifCurrentDevice = null;
 const MAX_PER_CAMERA = 3;
 
 async function loadCameras() {
@@ -303,13 +467,25 @@ async function loadCameras() {
             audioCell = '<span class="muted">○ выкл</span>';
         }
 
+        let vendorCell = '<span class="muted">—</span>';
+        if (c.type === 'ip' && c.source) {
+            const v = detectVendorClient(c.source);
+            if (v) vendorCell = escapeHtml(v);
+        }
+
+        const recordCell = c.record
+            ? '<span class="status-on" title="запись включена">● вкл</span>'
+            : '<span class="muted">○ выкл</span>';
+
         tr.innerHTML = `
             <td>${escapeHtml(c.id)}</td>
             <td>${escapeHtml(c.name)}</td>
             <td>${escapeHtml(c.type)}</td>
+            <td>${vendorCell}</td>
             <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.source)}</td>
             <td>${idx}</td>
             <td>${audioCell}</td>
+            <td>${recordCell}</td>
             <td>${c.connected
                 ? '<span class="status-on">● онлайн</span>'
                 : '<span class="status-off">○ оффлайн</span>'}</td>
@@ -322,12 +498,109 @@ async function loadCameras() {
     });
 }
 
+function detectVendorClient(url) {
+    if (!url) return null;
+    const u = url.toLowerCase();
+    if (u.includes('/streaming/channels/')) return 'Hikvision';
+    if (u.includes('/cam/realmonitor'))   return 'Dahua';
+    if (u.includes('/h264preview_'))      return 'Reolink';
+    if (u.includes('/axis-media/'))       return 'Axis';
+    return null;
+}
+
 function updateAudioRowVisibility() {
     const type = document.getElementById('m-type').value;
     const row = document.getElementById('row-audio-enable');
     row.style.display = (type === 'ip') ? 'flex' : 'none';
+    updateIpAutofillVisibility();
 }
 
+function updateIpAutofillVisibility() {
+    const type = document.getElementById('m-type').value;
+    const block = document.getElementById('m-ip-autofill');
+    block.style.display = (type === 'ip') ? 'block' : 'none';
+}
+
+// =====================================================================
+// АВТОЗАПОЛНЕНИЕ RTSP
+// =====================================================================
+async function loadCameraVendors() {
+    try {
+        cameraVendors = await api('GET', '/api/camera_templates/vendors');
+        const sel = document.getElementById('m-vendor');
+        sel.innerHTML = '<option value="">— выберите вендора —</option>';
+        cameraVendors.forEach(v => {
+            if (v.key === 'unknown') return;
+            const opt = document.createElement('option');
+            opt.value = v.key;
+            opt.textContent = v.label;
+            sel.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('loadCameraVendors failed:', e);
+    }
+}
+
+function onVendorChange() {
+    const vendorKey = document.getElementById('m-vendor').value;
+    const selStream = document.getElementById('m-vendor-stream');
+    selStream.innerHTML = '';
+
+    if (!vendorKey || !cameraVendors) {
+        selStream.innerHTML = '<option value="">— сначала выберите вендора —</option>';
+        return;
+    }
+    const v = cameraVendors.find(x => x.key === vendorKey);
+    if (!v || !v.streams || v.streams.length === 0) {
+        selStream.innerHTML = '<option value="">— нет потоков —</option>';
+        return;
+    }
+    v.streams.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.label;
+        selStream.appendChild(opt);
+    });
+
+    if (v.default_port) {
+        document.getElementById('m-port').value = v.default_port;
+    }
+}
+
+async function autofillRtsp() {
+    const vendor = document.getElementById('m-vendor').value;
+    const host = document.getElementById('m-ip').value.trim();
+    const port = parseInt(document.getElementById('m-port').value) || 554;
+    const stream_id = document.getElementById('m-vendor-stream').value;
+    const user = document.getElementById('m-ip-user').value.trim();
+    const password = document.getElementById('m-ip-pass').value;
+
+    if (!vendor || !host || !stream_id) {
+        showToast('Заполните вендора, IP и поток', true);
+        return;
+    }
+
+    try {
+        const r = await api('POST', '/api/camera_templates/autofill', {
+            vendor, host, port, stream_id, user, password,
+        });
+        document.getElementById('m-source').value = r.url;
+        showToast('RTSP-URL сгенерирован');
+    } catch (e) {}
+}
+
+// =====================================================================
+// ЗАПИСЬ В АРХИВ
+// =====================================================================
+function onRecordToggle() {
+    const on = document.getElementById('m-record').checked;
+    document.getElementById('row-archive-path').style.display = on ? 'flex' : 'none';
+    document.getElementById('archive-path-hint').style.display = on ? 'block' : 'none';
+}
+
+// =====================================================================
+// МОДАЛКА КАМЕРЫ
+// =====================================================================
 function openCameraModal(cameraId) {
     document.getElementById('modal-title').textContent =
         cameraId ? 'Редактирование камеры' : 'Новая камера';
@@ -347,6 +620,8 @@ function openCameraModal(cameraId) {
         document.getElementById('m-width').value = c.width;
         document.getElementById('m-height').value = c.height;
         document.getElementById('m-audio').checked = !!c.audio;
+        document.getElementById('m-record').checked = !!c.record;
+        document.getElementById('m-archive-path').value = c.archive_path || '';
         document.getElementById('probe-audio-status').textContent =
             (c.has_audio === null || c.has_audio === undefined)
                 ? ''
@@ -363,10 +638,19 @@ function openCameraModal(cameraId) {
         document.getElementById('m-width').value = 640;
         document.getElementById('m-height').value = 480;
         document.getElementById('m-audio').checked = false;
+        document.getElementById('m-record').checked = false;
+        document.getElementById('m-archive-path').value = '';
         document.getElementById('probe-audio-status').textContent = '';
+        document.getElementById('m-vendor').value = '';
+        document.getElementById('m-ip').value = '';
+        document.getElementById('m-port').value = 554;
+        document.getElementById('m-ip-user').value = '';
+        document.getElementById('m-ip-pass').value = '';
+        document.getElementById('m-vendor-stream').innerHTML =
+            '<option value="">— сначала выберите вендора —</option>';
     }
-    document.getElementById('m-record').checked = true;
     updateAudioRowVisibility();
+    onRecordToggle();
     document.getElementById('camera-modal').style.display = 'block';
 }
 
@@ -427,6 +711,7 @@ async function saveCamera() {
         width: parseInt(document.getElementById('m-width').value) || 640,
         height: parseInt(document.getElementById('m-height').value) || 480,
         record: document.getElementById('m-record').checked,
+        archive_path: document.getElementById('m-archive-path').value.trim(),
         has_audio: hasAudio,
         audio: document.getElementById('m-audio').checked,
     };
@@ -445,7 +730,7 @@ async function saveCamera() {
 }
 
 async function deleteCamera(id) {
-    if (!confirm('Удалить камеру ' + id + '?')) return;
+    if (!confirm('Удалить камеру ' + id + '? Все её потоки тоже будут удалены.')) return;
     try {
         await api('DELETE', '/api/cameras/' + encodeURIComponent(id));
         showToast('Камера удалена');
@@ -463,6 +748,9 @@ async function restartCamera(id) {
     } catch (e) {}
 }
 
+// =====================================================================
+// АРХИВ
+// =====================================================================
 async function loadArchive() {
     const c = await api('GET', '/api/archive/config');
     document.getElementById('arch-enabled').checked = !!c.enabled;
@@ -490,6 +778,9 @@ async function saveArchive() {
     } catch (e) {}
 }
 
+// =====================================================================
+// ТРАНСКОДИРОВАНИЕ
+// =====================================================================
 async function loadTranscodeCodecs() {
     try {
         const data = await api('GET', '/api/transcode/codecs');
@@ -605,6 +896,9 @@ function updateTranscodeBlock() {
     if (on) updateCodecNote();
 }
 
+// =====================================================================
+// ПОТОКИ RTSP
+// =====================================================================
 function streamsCountFor(cameraId) {
     return allStreams.filter(s => s.camera_id === cameraId).length;
 }
@@ -789,11 +1083,196 @@ async function replaceStream(removeStreamId) {
     } catch (e) {}
 }
 
+// =====================================================================
+// ДИАГНОСТИКА
+// =====================================================================
 function downloadDiagnostics() {
     showToast('Готовлю отчёт, подождите...');
     window.location.href = '/api/diagnostics/download';
 }
 
+// =====================================================================
+// ONVIF
+// =====================================================================
+async function onvifDiscover() {
+    const btn = document.getElementById('btn-onvif-discover');
+    const status = document.getElementById('onvif-status');
+    btn.disabled = true;
+    status.textContent = 'сканирую сеть (до 5 сек)...';
+
+    try {
+        const r = await api('POST', '/api/onvif/discover', { timeout: 4 });
+        _onvifDevices = r.devices || [];
+
+        const resultsDiv = document.getElementById('onvif-results');
+        const tbody = document.querySelector('#onvif-table tbody');
+        tbody.innerHTML = '';
+
+        if (_onvifDevices.length === 0) {
+            status.textContent = 'не найдено ни одной камеры';
+            resultsDiv.style.display = 'none';
+            return;
+        }
+
+        _onvifDevices.forEach(d => {
+            const tr = document.createElement('tr');
+            const nameModel = [
+                d.name ? escapeHtml(d.name) : '',
+                d.hardware ? escapeHtml(d.hardware) : '',
+            ].filter(Boolean).join(' / ') || '<span class="muted">—</span>';
+
+            tr.innerHTML =
+                '<td><b>' + escapeHtml(d.ip) + '</b></td>' +
+                '<td>' + nameModel + '</td>' +
+                '<td style="font-size:0.85em; color:#8b96a5">' +
+                    escapeHtml(d.endpoint) + '</td>' +
+                '<td>' +
+                    '<button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
+                    'onclick="openOnvifModal(\'' + escapeHtml(d.endpoint) + '\')">' +
+                    'Подключить</button>' +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+
+        resultsDiv.style.display = 'block';
+        status.textContent = 'найдено: ' + _onvifDevices.length;
+    } catch (e) {
+        status.textContent = 'ошибка: ' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function openOnvifModalManual() {
+    const ep = document.getElementById('onvif-manual-ep').value.trim();
+    if (!ep) {
+        showToast('Введите endpoint камеры', true);
+        return;
+    }
+    let endpoint = ep;
+    if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
+        endpoint = 'http://' + endpoint;
+    }
+    if (!endpoint.includes('/onvif/')) {
+        if (!endpoint.endsWith('/')) endpoint += '/';
+        endpoint += 'onvif/device_service';
+    }
+    openOnvifModal(endpoint);
+}
+
+function openOnvifModal(endpoint) {
+    _onvifCurrentDevice = endpoint;
+    document.getElementById('onvif-ep').value = endpoint;
+    document.getElementById('onvif-user').value = '';
+    document.getElementById('onvif-pass').value = '';
+    document.getElementById('onvif-probe-status').textContent = '';
+    document.getElementById('onvif-probe-result').style.display = 'none';
+    document.querySelector('#onvif-device-info').innerHTML = '';
+    document.querySelector('#onvif-profiles tbody').innerHTML = '';
+    document.getElementById('onvif-modal').style.display = 'block';
+}
+
+function closeOnvifModal() {
+    document.getElementById('onvif-modal').style.display = 'none';
+    _onvifCurrentDevice = null;
+}
+
+async function onvifProbe() {
+    if (!_onvifCurrentDevice) return;
+
+    const btn = document.getElementById('btn-onvif-probe');
+    const status = document.getElementById('onvif-probe-status');
+    const user = document.getElementById('onvif-user').value.trim();
+    const pass = document.getElementById('onvif-pass').value;
+
+    btn.disabled = true;
+    status.textContent = 'подключаюсь...';
+
+    try {
+        const r = await api('POST', '/api/onvif/probe', {
+            endpoint: _onvifCurrentDevice,
+            username: user,
+            password: pass,
+        });
+
+        const infoTable = document.getElementById('onvif-device-info');
+        const info = r.device_info || {};
+        infoTable.innerHTML = '';
+        const infoRows = [
+            ['Производитель', info.manufacturer],
+            ['Модель', info.model],
+            ['Прошивка', info.firmware],
+            ['Серийный номер', info.serial],
+            ['Hardware ID', info.hardware],
+        ];
+        infoRows.forEach(([k, v]) => {
+            if (v) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td style="color:#8b96a5; width:40%">' + k +
+                               '</td><td>' + escapeHtml(v) + '</td>';
+                infoTable.appendChild(tr);
+            }
+        });
+
+        const tbody = document.querySelector('#onvif-profiles tbody');
+        tbody.innerHTML = '';
+        (r.profiles || []).forEach(p => {
+            const tr = document.createElement('tr');
+            const url = p.rtsp_url || '';
+            const safeUrl = escapeHtml(url).replace(/'/g, "\\'");
+            const safeName = escapeHtml(p.name || p.token).replace(/'/g, "\\'");
+            tr.innerHTML =
+                '<td>' + escapeHtml(p.name || p.token) + '</td>' +
+                '<td style="font-size:0.85em; word-break:break-all">' +
+                    (url ? escapeHtml(url) : '<span class="muted">—</span>') + '</td>' +
+                '<td>' +
+                    (url
+                        ? '<button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
+                          'onclick="addOnvifCamera(\'' + safeUrl + '\', \'' + safeName + '\')">' +
+                          '+ Добавить</button>'
+                        : '') +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('onvif-probe-result').style.display = 'block';
+        status.textContent = 'успешно, профилей: ' + (r.profiles || []).length;
+
+    } catch (e) {
+        status.textContent = 'ошибка: ' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function addOnvifCamera(rtspUrl, profileName) {
+    const suggestedId = 'onvif_' + Math.random().toString(36).slice(2, 7);
+    const id = prompt('ID камеры (латиница, цифры, _, -):', suggestedId);
+    if (!id) return;
+
+    const name = prompt('Название камеры:', 'ONVIF ' + profileName);
+    if (!name) return;
+
+    try {
+        const r = await api('POST', '/api/onvif/add_camera', {
+            id: id.trim(),
+            name: name.trim(),
+            rtsp_url: rtspUrl,
+            fps: 25,
+            width: 1280,
+            height: 720,
+            record: false,
+        });
+        showToast('Камера добавлена: ' + r.camera.id);
+        closeOnvifModal();
+        await loadCameras();
+        await loadStreamCameras();
+    } catch (e) {}
+}
+
+// =====================================================================
+// БЕЗОПАСНОСТЬ
+// =====================================================================
 function renderUserRow(u) {
     u = u || { username: '', password: '', role: 'viewer' };
     const tr = document.createElement('tr');
@@ -804,7 +1283,13 @@ function renderUserRow(u) {
             '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>admin</option>' +
             '<option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>viewer</option>' +
         '</select></td>' +
-        '<td><button class="btn danger" type="button" onclick="this.closest(\'tr\').remove()">✕</button></td>';
+        '<td>' +
+            '<button class="btn secondary" type="button" ' +
+                'onclick="generateUserPassword(this)" ' +
+                'title="Сгенерировать случайный пароль">🎲</button> ' +
+            '<button class="btn danger" type="button" ' +
+                'onclick="this.closest(\'tr\').remove()">✕</button>' +
+        '</td>';
     return tr;
 }
 
@@ -833,6 +1318,15 @@ async function loadSecurity() {
     document.getElementById('api-token').value = data.api_token || '';
 }
 
+async function generateUserPassword(btn) {
+    try {
+        const r = await api('POST', '/api/security/generate_password');
+        const tr = btn.closest('tr');
+        tr.querySelector('.u-password').value = r.password;
+        showToast('Пароль сгенерирован');
+    } catch (e) {}
+}
+
 async function generateToken() {
     try {
         const r = await api('POST', '/api/security/generate_token');
@@ -853,12 +1347,16 @@ async function saveSecurity() {
     } catch (e) {}
 }
 
+// =====================================================================
+// Инициализация
+// =====================================================================
 document.getElementById('m-type').addEventListener('change', updateAudioRowVisibility);
 
 (async function init() {
     const steps = [
         ['loadCameras', loadCameras],
         ['loadArchive', loadArchive],
+        ['loadCameraVendors', loadCameraVendors],
         ['loadTranscodeCodecs', loadTranscodeCodecs],
         ['loadStreams', loadStreams],
         ['loadStreamCameras', loadStreamCameras],

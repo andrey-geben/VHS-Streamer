@@ -9,6 +9,10 @@ API управления конфигурацией + страница наст�
     - отдаются ТОЛЬКО администратору (роль 'admin');
     - обычный viewer получает их замаскированными ('***');
     - менять их можно только через /api/security/config (тоже admin-only).
+
+Дополнительно:
+    - шаблоны RTSP-путей по вендорам (Hikvision, Dahua, Reolink, Axis);
+    - индивидуальный путь архива для каждой камеры.
 """
 import copy
 import logging
@@ -25,6 +29,7 @@ from flask import (
 from auth import login_required, admin_required
 from camera import Camera
 from recorder import Recorder
+import camera_templates as ct
 
 logger = logging.getLogger(__name__)
 
@@ -79,29 +84,23 @@ def _normalize_analog_source(source, camera_id: str):
 
     Linux:   int (индекс) или строка "/dev/videoN"
     Windows: строка с именем dshow ("HD User Facing")
-             ИЛИ int (индекс) — тогда для dshow он всё равно
-             конвертируется FFmpeg'ом, но MJPEG в OpenCV работает по индексу.
+             ИЛИ int (индекс).
 
     Возвращает (value, error_message).
     """
     if source is None or source == "":
         return None, f"Камера '{camera_id}': source не может быть пустым"
 
-    # Если это число или строка-число — оставляем как int
     if isinstance(source, int):
         return source, None
     if isinstance(source, str):
         s = source.strip()
-        # Просто число
         if s.isdigit():
             return int(s), None
-        # Путь к устройству (Linux)
         if s.startswith("/dev/"):
             return s, None
-        # Имя устройства (Windows dshow). Требуем непустую строку.
         if IS_WINDOWS:
             return s, None
-        # Linux без /dev/ и не число — ошибка
         return None, (
             f"Камера '{camera_id}': для Linux source должен быть числом "
             f"(индекс) или путём /dev/videoN. Получено: {source!r}"
@@ -121,7 +120,6 @@ def _validate_camera(payload: dict) -> tuple[bool, str]:
     if not re.fullmatch(r"[A-Za-z0-9_\-]+", str(payload["id"])):
         return False, "id может содержать только буквы, цифры, '_' и '-'"
 
-    # Проверка source для аналоговой камеры
     if payload["type"] == "analog":
         _, err = _normalize_analog_source(payload["source"], payload["id"])
         if err:
@@ -145,9 +143,12 @@ def _camera_to_dict(cam: Camera) -> dict:
         "read_timeout_ms": cam.read_timeout_ms,
         "has_audio": cam.has_audio,
         "audio": cam.audio,
+        "archive_path": getattr(cam, "archive_path", ""),
+        "record": getattr(cam, "record", False),
         "connected": cam._connected,
         "last_error": cam._last_error,
     }
+
 
 def _find_camera_cfg(cfg: dict, cam_id: str) -> dict | None:
     for c in cfg.get("cameras", []):
@@ -157,6 +158,10 @@ def _find_camera_cfg(cfg: dict, cam_id: str) -> dict | None:
 
 
 def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, str]:
+    """
+    Собирает словарь конфига камеры из payload.
+    Возвращает (cfg, error_message). При ошибке cfg пустой.
+    """
     ctype = payload["type"]
     raw_source = payload["source"]
 
@@ -188,8 +193,17 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
         ha = payload.get("has_audio")
         if ha in (True, False):
             has_audio = bool(ha)
-        # audio имеет смысл только если звук реально есть
         audio = bool(payload.get("audio", False)) and (has_audio is True)
+
+    # Запись в архив — по умолчанию выключена
+    record = bool(payload.get("record", False))
+
+    # Индивидуальный путь архива — только если включена запись
+    archive_path = ""
+    if record:
+        ap = payload.get("archive_path")
+        if ap:
+            archive_path = str(ap).strip()
 
     cfg = {
         "id": cam_id,
@@ -200,7 +214,8 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
         "fps": int(payload.get("fps", 25)),
         "width": int(payload.get("width", 640)),
         "height": int(payload.get("height", 480)),
-        "record": bool(payload.get("record", True)),
+        "record": record,
+        "archive_path": archive_path,
         "transport": payload.get("transport") or None,
         "open_timeout_ms": int(payload.get("open_timeout_ms", 5000)),
         "read_timeout_ms": int(payload.get("read_timeout_ms", 5000)),
@@ -298,7 +313,8 @@ def api_set_security():
         sec["api_token"] = api_token
 
     _save_config(st["config"], st["config_path"])
-    logger.info("Настройки безопасности обновлены (пользователей: %d)", len(cleaned_users))
+    logger.info("Настройки безопасности обновлены (пользователей: %d)",
+                len(cleaned_users))
 
     resp = {"ok": True, "users_count": len(cleaned_users)}
     if warning:
@@ -310,7 +326,11 @@ def api_set_security():
 @admin_required
 def api_generate_token():
     return jsonify({"token": secrets.token_urlsafe(32)})
-
+@settings_bp.route("/api/security/generate_password", methods=["POST"])
+@admin_required
+def api_generate_password():
+    """Генерирует случайный пароль для нового пользователя."""
+    return jsonify({"password": secrets.token_urlsafe(12)})
 
 # ======================================================================
 # API: камеры
@@ -350,6 +370,7 @@ def api_add_camera():
     if err:
         return jsonify({"error": err}), 400
 
+    # Loopback URL — если камера уже под MediaMTX
     loopback_urls = current_app.config.get("LOOPBACK_URLS", {})
     if cam_id in loopback_urls:
         new_cfg["preview_source"] = loopback_urls[cam_id]
@@ -364,9 +385,9 @@ def api_add_camera():
     st["cameras"][cam_id] = cam
 
     archive_cfg = st["config"].get("archive", {})
-    if (archive_cfg.get("enabled", False)
-            and archive_cfg.get("record_all", True)
-            and new_cfg.get("record", True)):
+    if (new_cfg.get("record", False)
+            and archive_cfg.get("enabled", False)
+            and archive_cfg.get("record_all", True)):
         try:
             rec = Recorder(cam, archive_cfg, new_cfg)
             rec.start()
@@ -398,6 +419,7 @@ def api_update_camera(camera_id: str):
     if err:
         return jsonify({"error": err}), 400
 
+    # Останавливаем старый рекордер и камеру
     old_rec = st["recorders"].pop(camera_id, None)
     if old_rec:
         old_rec.stop()
@@ -407,7 +429,7 @@ def api_update_camera(camera_id: str):
     if old_cfg:
         st["config"]["cameras"].remove(old_cfg)
 
-    # Сохраняем preview_source, если камера в loopback
+    # Loopback URL — если камера под MediaMTX
     loopback_urls = current_app.config.get("LOOPBACK_URLS", {})
     if camera_id in loopback_urls:
         new_cfg["preview_source"] = loopback_urls[camera_id]
@@ -421,9 +443,9 @@ def api_update_camera(camera_id: str):
     st["cameras"][camera_id] = new_cam
 
     archive_cfg = st["config"].get("archive", {})
-    if (archive_cfg.get("enabled", False)
-            and archive_cfg.get("record_all", True)
-            and new_cfg.get("record", True)):
+    if (new_cfg.get("record", False)
+            and archive_cfg.get("enabled", False)
+            and archive_cfg.get("record_all", True)):
         try:
             rec = Recorder(new_cam, archive_cfg, new_cfg)
             rec.start()
@@ -460,6 +482,56 @@ def api_delete_camera(camera_id: str):
     return jsonify({"ok": True})
 
 
+@settings_bp.route("/api/cameras/<camera_id>/restart", methods=["POST"])
+@admin_required
+def api_restart_camera(camera_id: str):
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+    cam.stop()
+    cam.start()
+    return jsonify({"ok": True})
+
+
+# ======================================================================
+# API: проверка наличия аудио в потоке IP-камеры
+# ======================================================================
+@settings_bp.route("/api/cameras/<camera_id>/probe_audio", methods=["POST"])
+@admin_required
+def api_probe_audio(camera_id: str):
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+    if cam.type != "ip":
+        return jsonify({"error": "Проверка звука доступна только для IP-камер"}), 400
+
+    from audio_probe import probe_audio
+
+    logger.info("[%s] Проверяю наличие аудио в потоке...", camera_id)
+    has_audio = probe_audio(cam.source)
+    logger.info("[%s] Результат проверки аудио: has_audio=%s",
+                camera_id, has_audio)
+
+    cam.has_audio = has_audio
+    if not has_audio:
+        cam.audio = False
+
+    cfg = _find_camera_cfg(st["config"], camera_id)
+    if cfg:
+        cfg["has_audio"] = has_audio
+        if not has_audio:
+            cfg["audio"] = False
+        _save_config(st["config"], st["config_path"])
+
+    return jsonify({
+        "ok": True,
+        "has_audio": has_audio,
+        "audio": cam.audio,
+    })
+
+
 # ======================================================================
 # API: архив
 # ======================================================================
@@ -493,7 +565,7 @@ def api_set_archive():
 
 
 # ======================================================================
-# API: дублирование
+# API: дублирование MJPEG на отдельный порт
 # ======================================================================
 @settings_bp.route("/api/duplicate/config", methods=["GET"])
 @login_required
@@ -523,7 +595,7 @@ def api_set_duplicate():
 
 
 # ======================================================================
-# API: рекордеры
+# API: рекордеры (start/stop отдельной камеры)
 # ======================================================================
 @settings_bp.route("/api/recorders/<camera_id>/start", methods=["POST"])
 @admin_required
@@ -554,57 +626,61 @@ def api_stop_recorder(camera_id: str):
     return jsonify({"ok": True})
 
 
-@settings_bp.route("/api/cameras/<camera_id>/restart", methods=["POST"])
-@admin_required
-def api_restart_camera(camera_id: str):
-    st = _state()
-    cam = st["cameras"].get(camera_id)
-    if not cam:
-        return jsonify({"error": "not found"}), 404
-    cam.stop()
-    cam.start()
-    return jsonify({"ok": True})
+# ======================================================================
+# API: шаблоны вендоров IP-камер
+# ======================================================================
+@settings_bp.route("/api/camera_templates/vendors", methods=["GET"])
+@login_required
+def api_camera_vendors():
+    """Список поддерживаемых вендоров с потоками."""
+    try:
+        return jsonify(ct.list_vendors_for_api())
+    except Exception as e:
+        logger.exception("Ошибка загрузки шаблонов")
+        return jsonify({"error": str(e)}), 500
 
-# ----------------------------------------------------------------------
-# API: проверка наличия аудио в потоке IP-камеры
-# ----------------------------------------------------------------------
-@settings_bp.route("/api/cameras/<camera_id>/probe_audio", methods=["POST"])
-@admin_required
-def api_probe_audio(camera_id: str):
-    """
-    Запускает ffprobe и проверяет, есть ли аудиодорожка в потоке камеры.
-    Результат сохраняется в config.yaml как has_audio.
-    Если звука нет — флаг audio принудительно сбрасывается.
-    """
-    st = _state()
-    cam = st["cameras"].get(camera_id)
-    if not cam:
-        return jsonify({"error": "not found"}), 404
-    if cam.type != "ip":
-        return jsonify({"error": "Проверка звука доступна только для IP-камер"}), 400
 
-    from audio_probe import probe_audio
+@settings_bp.route("/api/camera_templates/detect", methods=["POST"])
+@login_required
+def api_camera_detect_vendor():
+    """Определяет вендора по RTSP-URL."""
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "URL обязателен"}), 400
 
-    logger.info("[%s] Проверяю наличие аудио в потоке...", camera_id)
-    has_audio = probe_audio(cam.source)
-    logger.info("[%s] Результат проверки аудио: has_audio=%s",
-                camera_id, has_audio)
-
-    # Обновляем объект в памяти
-    cam.has_audio = has_audio
-    if not has_audio:
-        cam.audio = False
-
-    # Обновляем config.yaml
-    cfg = _find_camera_cfg(st["config"], camera_id)
-    if cfg:
-        cfg["has_audio"] = has_audio
-        if not has_audio:
-            cfg["audio"] = False
-        _save_config(st["config"], st["config_path"])
-
+    key = ct.detect_vendor(url)
     return jsonify({
-        "ok": True,
-        "has_audio": has_audio,
-        "audio": cam.audio,
+        "vendor": key,
+        "label": ct.get_vendor_label(key),
+        "streams": ct.get_vendor_streams(key),
     })
+
+
+@settings_bp.route("/api/camera_templates/autofill", methods=["POST"])
+@admin_required
+def api_camera_autofill():
+    """
+    Генерирует RTSP-URL по вендору, хосту, порту и выбранному потоку.
+    Принимает: vendor, host, port, stream_id, user, password.
+    """
+    data = request.get_json(silent=True) or {}
+    vendor = (data.get("vendor") or "").strip()
+    host = (data.get("host") or "").strip()
+    if not vendor or not host:
+        return jsonify({"error": "Поля vendor и host обязательны"}), 400
+
+    try:
+        port = int(data.get("port") or 554)
+    except (TypeError, ValueError):
+        port = 554
+
+    stream_id = (data.get("stream_id") or "").strip()
+    user = (data.get("user") or "").strip()
+    password = data.get("password") or ""
+
+    url = ct.autofill_rtsp(vendor, host, port, stream_id, user, password)
+    if not url:
+        return jsonify({"error": "Не удалось сгенерировать URL"}), 400
+
+    return jsonify({"url": url})

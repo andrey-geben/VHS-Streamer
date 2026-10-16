@@ -64,6 +64,7 @@
                 <th>Индекс</th>
                 <th>Аудио</th>
                 <th>Архив</th>
+                <th>PTZ</th>
                 <th>Статус</th>
                 <th>Действия</th>
             </tr>
@@ -225,7 +226,7 @@
 </div>
 {% endif %}
 
-<!-- ============= МОДАЛКА КАМЕРЫ ============= -->
+<!-- ============= СТИЛИ МОДАЛКИ КАМЕРЫ ============= -->
 <style>
     #camera-modal .cam-modal-body .form-row {
         display: grid !important;
@@ -299,8 +300,43 @@
         width: 100%;
         box-sizing: border-box;
     }
+
+    /* PTZ-панель */
+    #camera-modal .ptz-btn {
+        background: #2a2f37;
+        color: #e8e8e8;
+        border: 1px solid #3a4150;
+        border-radius: 4px;
+        padding: 6px;
+        font-size: 1.05em;
+        cursor: pointer;
+        height: 40px;
+        min-width: 40px;
+        user-select: none;
+        transition: background 0.1s;
+    }
+    #camera-modal .ptz-btn:hover { background: #3a4150; }
+    #camera-modal .ptz-btn:active { background: #2a6df4; }
+    #camera-modal .ptz-btn.ptz-home { font-size: 1.1em; color: #57d87a; }
+    #camera-modal .ptz-preset-row {
+        display: flex; gap: 6px; align-items: center;
+        background: #14161a; border: 1px solid #2a2f37;
+        border-radius: 4px; padding: 4px 8px; margin-bottom: 4px;
+    }
+    #camera-modal .ptz-preset-row .name {
+        flex: 1; font-size: 0.9em;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #camera-modal .ptz-preset-row .btn-mini {
+        background: #3a4150; color: #fff; border: none;
+        border-radius: 3px; padding: 2px 8px; cursor: pointer;
+        font-size: 0.8em;
+    }
+    #camera-modal .ptz-preset-row .btn-mini:hover { background: #2a6df4; }
+    #camera-modal .ptz-preset-row .btn-mini.danger { background: #b13a3a; }
 </style>
 
+<!-- ============= МОДАЛКА КАМЕРЫ ============= -->
 <div id="camera-modal" style="display:none;
                               position:fixed; inset:0;
                               background:rgba(0,0,0,.6); z-index:100;
@@ -436,6 +472,88 @@
                 место (например, на NAS или внешний диск). Если оставить пустым —
                 используется глобальный путь из раздела «Архив».
             </p>
+
+            <!-- ============ PTZ-панель ============ -->
+            <div id="m-ptz-section"
+                 style="display:none; margin-top:20px;
+                        padding-top:16px;
+                        border-top:1px solid #2a2f37;">
+                <div style="display:flex; align-items:center;
+                            justify-content:space-between; margin-bottom:12px;">
+                    <div style="font-weight:600; color:#e8e8e8; font-size:1.05em;">
+                        PTZ-управление
+                    </div>
+                    <span class="muted" id="m-ptz-status" style="font-size:0.85em;"></span>
+                </div>
+
+                <div style="display:grid;
+                            grid-template-columns: 200px 130px 1fr;
+                            gap:20px; align-items:start;">
+
+                    <!-- Стрелки -->
+                    <div>
+                        <div style="font-size:0.85em; color:#8b96a5;
+                                    margin-bottom:6px; text-align:center;">
+                            Поворот
+                        </div>
+                        <div style="display:grid;
+                                    grid-template-columns: repeat(3, 1fr);
+                                    gap:4px;">
+                            <button class="ptz-btn" type="button"
+                                    data-pan="-1" data-tilt="1">↖</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="0" data-tilt="1">↑</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="1" data-tilt="1">↗</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="-1" data-tilt="0">←</button>
+                            <button class="ptz-btn ptz-home" type="button"
+                                    title="В исходное положение">⌂</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="1" data-tilt="0">→</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="-1" data-tilt="-1">↙</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="0" data-tilt="-1">↓</button>
+                            <button class="ptz-btn" type="button"
+                                    data-pan="1" data-tilt="-1">↘</button>
+                        </div>
+                    </div>
+
+                    <!-- Зум -->
+                    <div>
+                        <div style="font-size:0.85em; color:#8b96a5;
+                                    margin-bottom:6px; text-align:center;">
+                            Зум
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr; gap:4px;">
+                            <button class="ptz-btn" type="button"
+                                    data-zoom="1"
+                                    style="height:60px; font-size:1.4em;">＋</button>
+                            <button class="ptz-btn" type="button"
+                                    data-zoom="-1"
+                                    style="height:60px; font-size:1.4em;">−</button>
+                        </div>
+                    </div>
+
+                    <!-- Пресеты -->
+                    <div>
+                        <div style="display:flex; justify-content:space-between;
+                                    align-items:center; margin-bottom:6px;">
+                            <span style="font-size:0.85em; color:#8b96a5;">
+                                Пресеты
+                            </span>
+                            <button class="btn secondary" type="button"
+                                    style="padding:2px 10px; font-size:0.8em;"
+                                    onclick="ptzSavePreset()">
+                                + Сохранить текущее
+                            </button>
+                        </div>
+                        <div id="m-ptz-presets"
+                             style="max-height:180px; overflow-y:auto;"></div>
+                    </div>
+                </div>
+            </div>
 
         </div>
 
@@ -596,6 +714,11 @@ async function loadCameras() {
             ? '<span class="status-on" title="запись включена">● вкл</span>'
             : '<span class="muted">○ выкл</span>';
 
+        // PTZ: показываем "?" — реальная проверка только в модалке
+        const ptzCell = (c.type === 'ip')
+            ? '<span class="muted" title="Проверяется в модалке камеры">?</span>'
+            : '<span class="muted">—</span>';
+
         tr.innerHTML = `
             <td>${escapeHtml(c.id)}</td>
             <td>${escapeHtml(c.name)}</td>
@@ -605,6 +728,7 @@ async function loadCameras() {
             <td>${idx}</td>
             <td>${audioCell}</td>
             <td>${recordCell}</td>
+            <td>${ptzCell}</td>
             <td>${c.connected
                 ? '<span class="status-on">● онлайн</span>'
                 : '<span class="status-off">○ оффлайн</span>'}</td>
@@ -638,6 +762,11 @@ function updateIpAutofillVisibility() {
     const type = document.getElementById('m-type').value;
     const block = document.getElementById('m-ip-autofill');
     block.style.display = (type === 'ip') ? 'block' : 'none';
+
+    if (type !== 'ip') {
+        const ptz = document.getElementById('m-ptz-section');
+        if (ptz) ptz.style.display = 'none';
+    }
 }
 
 // =====================================================================
@@ -770,6 +899,7 @@ function openCameraModal(cameraId) {
     }
     updateAudioRowVisibility();
     onRecordToggle();
+    loadPtzInfo(cameraId);
     document.getElementById('camera-modal').style.display = 'flex';
 }
 
@@ -865,6 +995,200 @@ async function restartCamera(id) {
         showToast('Камера перезапущена');
         await loadCameras();
     } catch (e) {}
+}
+
+// =====================================================================
+// PTZ
+// =====================================================================
+let _ptzProfileToken = null;
+let _ptzBound = false;
+
+async function loadPtzInfo(cameraId) {
+    const section = document.getElementById('m-ptz-section');
+    const status = document.getElementById('m-ptz-status');
+
+    section.style.display = 'none';
+    _ptzProfileToken = null;
+
+    if (!cameraId) return;
+    const c = camerasList.find(x => x.id === cameraId);
+    if (!c || c.type !== 'ip') return;
+
+    status.textContent = 'проверяю...';
+
+    try {
+        const r = await api('GET',
+            '/api/cameras/' + encodeURIComponent(cameraId) + '/ptz/info');
+
+        if (!r.ok || !r.has_ptz) {
+            section.style.display = 'none';
+            return;
+        }
+
+        _ptzProfileToken = r.profile_token;
+        status.textContent = 'profile: ' + (r.profile_token || '—');
+        renderPtzPresets(r.presets || []);
+        section.style.display = 'block';
+
+        if (!_ptzBound) {
+            bindPtzButtons();
+            _ptzBound = true;
+        }
+    } catch (e) {
+        section.style.display = 'none';
+    }
+}
+
+function renderPtzPresets(presets) {
+    const box = document.getElementById('m-ptz-presets');
+    box.innerHTML = '';
+    if (!presets.length) {
+        box.innerHTML =
+            '<div class="muted" style="font-size:0.85em; padding:4px;">' +
+            'нет пресетов</div>';
+        return;
+    }
+    presets.forEach(p => {
+        const row = document.createElement('div');
+        row.className = 'ptz-preset-row';
+        const safeToken = escapeHtml(p.token).replace(/'/g, "\\'");
+        row.innerHTML =
+            '<span class="name" title="' + escapeHtml(p.name) + '">' +
+                escapeHtml(p.name) + '</span>' +
+            '<button class="btn-mini" type="button" ' +
+                'onclick="ptzGotoPreset(\'' + safeToken + '\')" ' +
+                'title="Перейти к пресету">▶</button>' +
+            '<button class="btn-mini danger" type="button" ' +
+                'onclick="ptzRemovePreset(\'' + safeToken + '\')" ' +
+                'title="Удалить">✕</button>';
+        box.appendChild(row);
+    });
+}
+
+async function ptzMove(pan, tilt, zoom) {
+    const mode = document.getElementById('camera-modal').dataset.mode;
+    if (mode !== 'edit') return;
+    const id = document.getElementById('m-id').value.trim();
+    if (!id || !_ptzProfileToken) return;
+
+    try {
+        await api('POST',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/move',
+            {
+                pan: pan, tilt: tilt, zoom: zoom,
+                duration: 0.3,
+                profile_token: _ptzProfileToken,
+            });
+    } catch (e) {}
+}
+
+async function ptzStop() {
+    const mode = document.getElementById('camera-modal').dataset.mode;
+    if (mode !== 'edit') return;
+    const id = document.getElementById('m-id').value.trim();
+    if (!id || !_ptzProfileToken) return;
+
+    try {
+        await api('POST',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/stop',
+            { profile_token: _ptzProfileToken });
+    } catch (e) {}
+}
+
+async function ptzHome() {
+    const id = document.getElementById('m-id').value.trim();
+    if (!id || !_ptzProfileToken) return;
+    try {
+        await api('POST',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/home',
+            { profile_token: _ptzProfileToken });
+        showToast('PTZ: исходное положение');
+    } catch (e) {}
+}
+
+async function ptzGotoPreset(token) {
+    const id = document.getElementById('m-id').value.trim();
+    if (!id || !_ptzProfileToken) return;
+    try {
+        await api('POST',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/preset/goto',
+            {
+                profile_token: _ptzProfileToken,
+                preset_token: token,
+            });
+        showToast('PTZ: переход к пресету');
+    } catch (e) {}
+}
+
+async function ptzRemovePreset(token) {
+    if (!confirm('Удалить пресет?')) return;
+    const id = document.getElementById('m-id').value.trim();
+    if (!id || !_ptzProfileToken) return;
+    try {
+        await api('POST',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/preset/remove',
+            {
+                profile_token: _ptzProfileToken,
+                preset_token: token,
+            });
+        showToast('Пресет удалён');
+        const r = await api('GET',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/info');
+        if (r.has_ptz) renderPtzPresets(r.presets || []);
+    } catch (e) {}
+}
+
+async function ptzSavePreset() {
+    const id = document.getElementById('m-id').value.trim();
+    if (!id || !_ptzProfileToken) return;
+    const name = prompt('Название пресета:',
+        'Пресет ' + new Date().toLocaleTimeString('ru-RU'));
+    if (!name) return;
+    try {
+        const r = await api('POST',
+            '/api/cameras/' + encodeURIComponent(id) + '/ptz/preset/set',
+            {
+                profile_token: _ptzProfileToken,
+                name: name,
+            });
+        if (r.ok) {
+            showToast('Пресет сохранён');
+            const info = await api('GET',
+                '/api/cameras/' + encodeURIComponent(id) + '/ptz/info');
+            if (info.has_ptz) renderPtzPresets(info.presets || []);
+        } else {
+            showToast('Не удалось сохранить пресет', true);
+        }
+    } catch (e) {}
+}
+
+function bindPtzButtons() {
+    document.querySelectorAll('#m-ptz-section .ptz-btn').forEach(btn => {
+        if (btn.classList.contains('ptz-home')) {
+            btn.addEventListener('click', ptzHome);
+            return;
+        }
+
+        const pan = parseFloat(btn.dataset.pan || '0');
+        const tilt = parseFloat(btn.dataset.tilt || '0');
+        const zoom = parseFloat(btn.dataset.zoom || '0');
+
+        const start = (e) => {
+            e.preventDefault();
+            ptzMove(pan, tilt, zoom);
+        };
+        const stop = (e) => {
+            e.preventDefault();
+            ptzStop();
+        };
+
+        btn.addEventListener('mousedown', start);
+        btn.addEventListener('mouseup', stop);
+        btn.addEventListener('mouseleave', stop);
+        btn.addEventListener('touchstart', start, { passive: false });
+        btn.addEventListener('touchend', stop, { passive: false });
+        btn.addEventListener('touchcancel', stop, { passive: false });
+    });
 }
 
 // =====================================================================

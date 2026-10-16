@@ -70,6 +70,9 @@ hiddenimports = [
     "transcode",
     "mediamtx_manager",
     "diagnostics",
+    "onvif_client",
+    "camera_templates",
+    "netdetect",
 ]
 hiddenimports += numpy_hiddenimports
 hiddenimports += opencv_hiddenimports

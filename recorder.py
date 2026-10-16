@@ -38,7 +38,23 @@ class Recorder:
         self.cfg = archive_cfg
         self.camera_cfg = camera_cfg
 
-        self.base_path: Path = Path(archive_cfg["path"]).resolve() / camera.id
+        # Путь для архива этой камеры:
+        #   1) если в camera_cfg задан archive_path — используем его;
+        #   2) иначе — глобальный archive_cfg["path"] / <camera_id>.
+        individual_path = (camera_cfg.get("archive_path") or "").strip()
+        if individual_path:
+            base = Path(individual_path).expanduser()
+            # Если пользователь указал путь с плейсхолдером {camera_id} —
+            # подставим id
+            if "{camera_id}" in str(base):
+                base = Path(str(base).replace("{camera_id}", camera.id))
+            # Если путь не заканчивается на id камеры — добавим
+            elif base.name != camera.id:
+                base = base / camera.id
+        else:
+            base = Path(archive_cfg["path"]).expanduser() / camera.id
+
+        self.base_path: Path = base.resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)
 
         self.segment_seconds: int = int(archive_cfg.get("segment_minutes", 5)) * 60

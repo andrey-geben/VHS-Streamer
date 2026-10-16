@@ -58,7 +58,9 @@ class Camera:
         self.has_audio: bool | None = config.get("has_audio")
         # audio: включён ли захват звука (имеет смысл только если has_audio=True)
         self.audio: bool = bool(config.get("audio", False))
-
+        # --- Индивидуальный путь архива (опционально) ---
+        # Если пусто — используется глобальный archive.path из config.yaml.
+        self.archive_path: str = (config.get("archive_path") or "").strip()
     # ------------------------------------------------------------------
     # Подписчики (для рекордера)
     # ------------------------------------------------------------------

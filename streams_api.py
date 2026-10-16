@@ -1,5 +1,14 @@
 """
 API управления потоками и страница «Потоки».
+
+Логика:
+    * для каждой камеры автоматически создаётся raw-путь в MediaMTX;
+    * пользовательские потоки добавляются/удаляются через UI;
+    * на одну камеру — не более MAX_STREAMS_PER_CAMERA потоков;
+    * оценка нагрузки CPU/RAM — эвристическая, показывается в UI;
+    * каждый поток возвращает готовые RTSP- и WebRTC-ссылки
+      для каждого сетевого интерфейса (гибрид: автоопределение
+      системы + ручные описания из config.yaml).
 """
 import logging
 from pathlib import Path
@@ -9,14 +18,19 @@ from flask import (
 )
 
 from auth import login_required, admin_required
+from netdetect import build_endpoints
 
 logger = logging.getLogger(__name__)
 
 streams_bp = Blueprint("streams", __name__)
 
+# Максимум потоков на одну камеру
 MAX_STREAMS_PER_CAMERA = 3
 
 
+# ----------------------------------------------------------------------
+# Хелперы
+# ----------------------------------------------------------------------
 def _state():
     return {
         "cameras": current_app.config["CAMERAS"],
@@ -34,10 +48,12 @@ def _save_config(cfg: dict, path: Path):
 
 
 def _raw_path(camera_id: str) -> str:
+    """Имя raw-пути для камеры."""
     return f"__raw_{camera_id}"
 
 
 def _count_streams_for_camera(cfg: dict, camera_id: str) -> int:
+    """Сколько потоков уже привязано к камере."""
     return sum(
         1 for s in cfg.get("streams", [])
         if s.get("camera_id") == camera_id
@@ -45,6 +61,10 @@ def _count_streams_for_camera(cfg: dict, camera_id: str) -> int:
 
 
 def _next_stream_index(cfg: dict, camera_id: str) -> int:
+    """
+    Возвращает первый свободный индекс для потоков камеры.
+    Формат id: {camera_id}_s{N}, где N — 1..MAX.
+    """
     used = set()
     prefix = f"{camera_id}_s"
     for s in cfg.get("streams", []):
@@ -62,6 +82,9 @@ def _next_stream_index(cfg: dict, camera_id: str) -> int:
     return MAX_STREAMS_PER_CAMERA + 1
 
 
+# ----------------------------------------------------------------------
+# Оценка нагрузки (эвристика)
+# ----------------------------------------------------------------------
 def _estimate_load(stream_cfg: dict, camera) -> dict:
     if stream_cfg.get("copy", True):
         return {"cpu_percent_of_core": 2, "ram_mb": 20, "level": "low"}
@@ -80,7 +103,7 @@ def _estimate_load(stream_cfg: dict, camera) -> dict:
     if codec == "libx264":
         base = target_h * fps / 25 * 0.08
         cpu = min(int(base), 200)
-    elif codec in ("h264_qsv", "h264_nvenc", "h264_amf"):
+    elif codec in ("h264_qsv", "h264_nvenc", "h264_amf", "nvv4l2h264enc"):
         cpu = 5
     else:
         cpu = 50
@@ -128,6 +151,9 @@ def _total_estimated_load(cfg: dict, cameras: dict) -> dict:
     }
 
 
+# ----------------------------------------------------------------------
+# Работа с MediaMTX
+# ----------------------------------------------------------------------
 def _apply_stream_to_mediamtx(stream_cfg: dict, cameras: dict, mediamtx, helpers):
     cam = cameras.get(stream_cfg["camera_id"])
     if not cam:
@@ -141,23 +167,31 @@ def _apply_stream_to_mediamtx(stream_cfg: dict, cameras: dict, mediamtx, helpers
 
 def _ensure_raw_path(camera, mediamtx, helpers):
     raw = _raw_path(camera.id)
+
     try:
         status = mediamtx.get_path_status(raw)
         if status and status.get("ready"):
-            logger.debug("raw-путь %s уже готов", raw)
+            logger.debug("raw-путь %s уже готов, не пересоздаём", raw)
             return
     except Exception:
         pass
+
     cfg = helpers["build_raw_path_config"](camera)
     mediamtx.add_path(raw, cfg)
 
 
+# ----------------------------------------------------------------------
+# Страница
+# ----------------------------------------------------------------------
 @streams_bp.route("/streams")
 @login_required
 def streams_page():
     return render_template("streams.html", user=g.user)
 
 
+# ----------------------------------------------------------------------
+# API: список потоков (с готовыми RTSP и WebRTC URL)
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/streams", methods=["GET"])
 @login_required
 def api_list_streams():
@@ -167,18 +201,11 @@ def api_list_streams():
     mediamtx = st["mediamtx"]
 
     rtsp_port = cfg.get("mediamtx", {}).get("rtsp_port", 8554)
-    interfaces = cfg.get("network", {}).get("interfaces", []) or []
+    webrtc_port = cfg.get("mediamtx", {}).get("webrtc_port", 8889)
 
-    endpoints = [{"host": "127.0.0.1", "label": "Локально (на сервере)"}]
-    for iface in interfaces:
-        ip = iface.get("ip")
-        if not ip:
-            continue
-        endpoints.append({
-            "host": ip,
-            "label": iface.get("description") or iface.get("name") or ip,
-            "name": iface.get("name"),
-        })
+    # Список сетевых endpoints — гибрид:
+    # автоопределение системы + ручные описания из config.yaml
+    endpoints = build_endpoints(cfg)
 
     result = []
     for s in cfg.get("streams", []):
@@ -188,9 +215,20 @@ def api_list_streams():
         name = s["path"].lstrip("/")
         status = mediamtx.get_path_status(name) if mediamtx else None
 
+        # RTSP-ссылки для копирования
         urls = [
             {
                 "url": f"rtsp://{ep['host']}:{rtsp_port}{s['path']}",
+                "label": ep["label"],
+                "host": ep["host"],
+            }
+            for ep in endpoints
+        ]
+
+        # WebRTC-ссылки для встраивания в браузер
+        webrtc_urls = [
+            {
+                "url": f"http://{ep['host']}:{webrtc_port}{s['path']}/",
                 "label": ep["label"],
                 "host": ep["host"],
             }
@@ -202,6 +240,7 @@ def api_list_streams():
             "camera_name": cam.name if cam else "—",
             "estimate": est,
             "urls": urls,
+            "webrtc_urls": webrtc_urls,
             "runtime": {
                 "ready": bool(status and status.get("ready")),
                 "readers": (status or {}).get("readers", []) or [],
@@ -214,11 +253,15 @@ def api_list_streams():
         "streams": result,
         "totals": totals,
         "rtsp_port": rtsp_port,
-        "interfaces": interfaces,
+        "webrtc_port": webrtc_port,
+        "endpoints": endpoints,
         "max_per_camera": MAX_STREAMS_PER_CAMERA,
     })
 
 
+# ----------------------------------------------------------------------
+# API: статистика по камерам (для выпадающего списка)
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/streams/stats", methods=["GET"])
 @login_required
 def api_streams_stats():
@@ -238,6 +281,9 @@ def api_streams_stats():
     return jsonify(result)
 
 
+# ----------------------------------------------------------------------
+# API: добавить поток
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/streams", methods=["POST"])
 @admin_required
 def api_add_stream():
@@ -314,6 +360,9 @@ def api_add_stream():
     return jsonify({"ok": True, "stream": new_stream}), 201
 
 
+# ----------------------------------------------------------------------
+# API: удалить поток
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/streams/<stream_id>", methods=["DELETE"])
 @admin_required
 def api_delete_stream(stream_id: str):
@@ -334,6 +383,9 @@ def api_delete_stream(stream_id: str):
     return jsonify({"ok": True})
 
 
+# ----------------------------------------------------------------------
+# API: включить/выключить поток
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/streams/<stream_id>/toggle", methods=["POST"])
 @admin_required
 def api_toggle_stream(stream_id: str):
@@ -369,13 +421,19 @@ def api_toggle_stream(stream_id: str):
     return jsonify({"ok": True, "enabled": stream["enabled"]})
 
 
+# ----------------------------------------------------------------------
+# API: список сетевых интерфейсов (из системы + конфига)
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/network/interfaces", methods=["GET"])
 @login_required
 def api_list_interfaces():
     st = _state()
-    return jsonify(st["config"].get("network", {}).get("interfaces", []))
+    return jsonify(build_endpoints(st["config"]))
 
 
+# ----------------------------------------------------------------------
+# API: доступные кодеки и пресеты для транскодирования
+# ----------------------------------------------------------------------
 @streams_bp.route("/api/transcode/codecs", methods=["GET"])
 @login_required
 def api_transcode_codecs():
@@ -390,3 +448,59 @@ def api_transcode_codecs():
             "presets": [],
             "error": str(e),
         })
+
+
+# ----------------------------------------------------------------------
+# Публичный API для клиентов (VHS-Viewer и др.) — без авторизации
+# ----------------------------------------------------------------------
+@streams_bp.route("/api/public/streams", methods=["GET"])
+def api_public_streams():
+    """
+    Публичный список потоков для клиентов-просмотрщиков.
+    Не требует авторизации. Отдаёт только WebRTC-ссылки.
+    """
+    st = _state()
+    cfg = st["config"]
+    cameras = st["cameras"]
+
+    rtsp_port = cfg.get("mediamtx", {}).get("rtsp_port", 8554)
+    webrtc_port = cfg.get("mediamtx", {}).get("webrtc_port", 8889)
+
+    endpoints = build_endpoints(cfg)
+    # Для публичного API убираем пометку «(на сервере)»
+    if endpoints:
+        endpoints[0] = {"host": "127.0.0.1", "label": "Локально"}
+
+    server_name = cfg.get("server", {}).get("name", "VHS-Streamer")
+
+    result = []
+    for s in cfg.get("streams", []):
+        if not s.get("enabled", True):
+            continue
+        cam = cameras.get(s.get("camera_id"))
+        cam_name = cam.name if cam else "—"
+
+        webrtc_urls = [
+            {
+                "url": f"http://{ep['host']}:{webrtc_port}{s['path']}/",
+                "label": ep["label"],
+                "host": ep["host"],
+            }
+            for ep in endpoints
+        ]
+
+        result.append({
+            "id": s["id"],
+            "path": s["path"],
+            "camera_name": cam_name,
+            "name": f"{cam_name} / {s['id']}",
+            "webrtc_urls": webrtc_urls,
+        })
+
+    return jsonify({
+        "server_name": server_name,
+        "rtsp_port": rtsp_port,
+        "webrtc_port": webrtc_port,
+        "count": len(result),
+        "streams": result,
+    })

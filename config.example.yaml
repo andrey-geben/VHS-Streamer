@@ -27,6 +27,7 @@ mediamtx:
   binary: "./bin/mediamtx.exe"
   config: "./mediamtx.yml"
   rtsp_port: 8554
+  webrtc_port: 8889           # поиск серверов
   api_url: "http://127.0.0.1:9997"
   loopback_codec: auto
 

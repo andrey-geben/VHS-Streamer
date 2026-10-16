@@ -1092,3 +1092,73 @@ def _parse_rtsp_for_onvif(rtsp_url: str):
         "port": int(m.group("port")) if m.group("port") else 554,
         "path": m.group("path") or "",
     }
+
+
+# ======================================================================
+# API: PTZ — capabilities для всех камер (для главной страницы)
+# ======================================================================
+# Кэш результатов: проверка PTZ занимает время (несколько SOAP-запросов
+# на камеру), поэтому кэшируем и перепроверяем раз в 5 минут.
+_ptz_cache = {
+    "data": {},          # {camera_id: {"has_ptz": bool, "profile_token": str|None}}
+    "ts": 0.0,           # timestamp последней проверки
+}
+_PTZ_CACHE_TTL = 300     # секунд
+
+
+@settings_bp.route("/api/ptz/capabilities", methods=["GET"])
+@login_required
+def api_ptz_capabilities():
+    """
+    Возвращает для всех IP-камер информацию о поддержке PTZ.
+    Формат: {"cameras": {"ip_1": {"has_ptz": true, "profile_token": "..."}, ...}}
+
+    Кэшируется на 5 минут, чтобы не дёргать ONVIF при каждой загрузке
+    главной страницы.
+    """
+    import time as _time
+
+    st = _state()
+    cameras = st["cameras"]
+
+    # Если кэш свежий — возвращаем из него
+    now = _time.time()
+    if (now - _ptz_cache["ts"] < _PTZ_CACHE_TTL
+            and _ptz_cache["data"]):
+        return jsonify({"cameras": _ptz_cache["data"]})
+
+    # Перепроверяем
+    from onvif_client import get_ptz_info
+
+    result = {}
+    for cam_id, cam in cameras.items():
+        if cam.type != "ip":
+            continue
+
+        parsed = _parse_rtsp_for_onvif(cam.source)
+        if not parsed:
+            result[cam_id] = {"has_ptz": False, "profile_token": None}
+            continue
+
+        endpoint = f"http://{parsed['host']}/onvif/device_service"
+        try:
+            info = get_ptz_info(
+                endpoint,
+                parsed.get("user", ""),
+                parsed.get("password", ""),
+            )
+            result[cam_id] = {
+                "has_ptz": bool(info.get("has_ptz")),
+                "profile_token": info.get("profile_token"),
+            }
+            logger.info("[%s] PTZ capabilities: has_ptz=%s",
+                        cam_id, info.get("has_ptz"))
+        except Exception as e:
+            logger.warning("[%s] PTZ capabilities error: %s", cam_id, e)
+            result[cam_id] = {"has_ptz": False, "profile_token": None}
+
+    # Сохраняем в кэш
+    _ptz_cache["data"] = result
+    _ptz_cache["ts"] = now
+
+    return jsonify({"cameras": result})

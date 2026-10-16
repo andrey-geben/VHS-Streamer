@@ -11,6 +11,9 @@
         {% if sysinfo.mediamtx_ready %}
             <div class="status-on">● RTSP :{{ sysinfo.mediamtx_port }}</div>
         {% endif %}
+        {% if sysinfo.duplicate_enabled %}
+            <div class="status-on">● MJPEG :{{ sysinfo.duplicate_port }}</div>
+        {% endif %}
         <div class="muted" style="margin-left:auto; font-size:0.85em">
             WebRTC-плеер через MediaMTX
         </div>
@@ -21,7 +24,7 @@
     {% for cam in cameras %}
     {% set st = cam.get_status() %}
     {% set rec = rec_statuses.get(cam.id) %}
-    <div class="cam-card">
+    <div class="cam-card" data-camera-id="{{ cam.id }}">
         <div class="cam-header">
             <span class="cam-name" title="{{ cam.name }}">{{ cam.name }}</span>
             <div style="display:flex; gap:6px; align-items:center">
@@ -29,6 +32,13 @@
                     <span class="status-on" title="онлайн">●</span>
                 {% else %}
                     <span class="status-off" title="{{ st.last_error or 'оффлайн' }}">○</span>
+                {% endif %}
+                {% if cam.type == 'ip' %}
+                    <button class="cam-ptz-btn" type="button"
+                            data-camera-id="{{ cam.id }}"
+                            style="display:none;"
+                            onclick="togglePtzPanel('{{ cam.id }}')"
+                            title="PTZ-управление">🎮</button>
                 {% endif %}
                 <button class="cam-fs-btn"
                         onclick="openFullscreen('{{ cam.id }}', '{{ cam.name|e }}')"
@@ -44,12 +54,40 @@
                     allow="autoplay; fullscreen"
                     scrolling="no"
                     frameborder="0"></iframe>
+
+            <div class="cam-ptz-panel"
+                 id="ptz-panel-{{ cam.id }}"
+                 style="display:none;"
+                 onclick="event.stopPropagation()">
+                <div class="ptz-header">
+                    <span>PTZ</span>
+                    <button type="button" class="ptz-close"
+                            onclick="togglePtzPanel('{{ cam.id }}')">✕</button>
+                </div>
+                <div class="ptz-grid">
+                    <button type="button" class="ptz-b" data-dir="nw">↖</button>
+                    <button type="button" class="ptz-b" data-dir="n">↑</button>
+                    <button type="button" class="ptz-b" data-dir="ne">↗</button>
+                    <button type="button" class="ptz-b" data-dir="w">←</button>
+                    <button type="button" class="ptz-b ptz-home" data-dir="home" title="Исходное положение">⌂</button>
+                    <button type="button" class="ptz-b" data-dir="e">→</button>
+                    <button type="button" class="ptz-b" data-dir="sw">↙</button>
+                    <button type="button" class="ptz-b" data-dir="s">↓</button>
+                    <button type="button" class="ptz-b" data-dir="se">↘</button>
+                </div>
+                <div class="ptz-zoom">
+                    <button type="button" class="ptz-b ptz-z" data-zoom="1" title="Приблизить">＋</button>
+                    <button type="button" class="ptz-b ptz-z" data-zoom="-1" title="Отдалить">−</button>
+                </div>
+            </div>
         </div>
 
         <div class="cam-footer">
             <span class="muted">{{ cam.id }}</span>
             {% if rec %}
-                <span class="muted">⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ</span>
+                <span class="muted" title="сегментов / занято в архиве">
+                    ⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ
+                </span>
             {% else %}
                 <span class="muted">запись выкл.</span>
             {% endif %}
@@ -61,7 +99,12 @@
 <div id="fs-overlay" class="fs-overlay">
     <div class="fs-toolbar">
         <span id="fs-title" class="fs-title"></span>
-        <button class="fs-close" onclick="closeFullscreen()" title="Закрыть (Esc)">✕</button>
+        <div style="display:flex; gap:8px; align-items:center">
+            <button class="fs-ptz-btn" id="fs-ptz-btn" type="button"
+                    onclick="toggleFsPtzPanel()" style="display:none;"
+                    title="PTZ-управление">🎮</button>
+            <button class="fs-close" onclick="closeFullscreen()" title="Закрыть (Esc)">✕</button>
+        </div>
     </div>
     <div class="fs-body">
         <iframe id="fs-iframe"
@@ -69,6 +112,31 @@
                 scrolling="no"
                 frameborder="0"
                 style="width:100%; height:100%"></iframe>
+
+        <div class="cam-ptz-panel fs-ptz-panel"
+             id="fs-ptz-panel"
+             style="display:none;">
+            <div class="ptz-header">
+                <span>PTZ</span>
+                <button type="button" class="ptz-close"
+                        onclick="toggleFsPtzPanel()">✕</button>
+            </div>
+            <div class="ptz-grid">
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="nw">↖</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="n">↑</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="ne">↗</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="w">←</button>
+                <button type="button" class="ptz-b fs-ptz-b fs-ptz-home" data-dir="home" title="Исходное положение">⌂</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="e">→</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="sw">↙</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="s">↓</button>
+                <button type="button" class="ptz-b fs-ptz-b" data-dir="se">↘</button>
+            </div>
+            <div class="ptz-zoom">
+                <button type="button" class="ptz-b fs-ptz-b ptz-z" data-zoom="1">＋</button>
+                <button type="button" class="ptz-b fs-ptz-b ptz-z" data-zoom="-1">−</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -100,7 +168,7 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 75%;
+        max-width: 65%;
     }
     .cam-preview {
         background: #000;
@@ -114,9 +182,7 @@
         transition: outline 0.15s;
         position: relative;
     }
-    .cam-preview:hover {
-        outline: 1px solid #4da3ff;
-    }
+    .cam-preview:hover { outline: 1px solid #4da3ff; }
     .cam-iframe {
         width: 100%;
         height: 100%;
@@ -129,7 +195,7 @@
         font-size: 0.78em;
         padding: 0 2px;
     }
-    .cam-fs-btn {
+    .cam-fs-btn, .cam-ptz-btn {
         background: transparent;
         border: 1px solid #2a2f37;
         color: #cfd6e0;
@@ -139,10 +205,78 @@
         cursor: pointer;
         line-height: 1.2;
     }
-    .cam-fs-btn:hover {
+    .cam-fs-btn:hover, .cam-ptz-btn:hover {
         background: #2a2f37;
         color: #fff;
     }
+    .cam-ptz-btn {
+        color: #57d87a;
+        border-color: #3a5e45;
+    }
+    .cam-ptz-btn.active {
+        background: #2a6df4;
+        color: #fff;
+    }
+
+    .cam-ptz-panel {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(20, 22, 26, 0.94);
+        border: 1px solid #3a4150;
+        border-radius: 6px;
+        padding: 8px;
+        z-index: 5;
+        backdrop-filter: blur(4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .ptz-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.78em;
+        color: #57d87a;
+        font-weight: 600;
+        margin-bottom: 6px;
+        padding: 0 2px;
+    }
+    .ptz-close {
+        background: transparent;
+        border: none;
+        color: #8b96a5;
+        cursor: pointer;
+        font-size: 1em;
+        padding: 0 4px;
+    }
+    .ptz-close:hover { color: #fff; }
+    .ptz-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 30px);
+        grid-template-rows: repeat(3, 30px);
+        gap: 3px;
+        margin-bottom: 4px;
+    }
+    .ptz-zoom {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px;
+    }
+    .ptz-b {
+        background: #2a2f37;
+        color: #e8e8e8;
+        border: 1px solid #3a4150;
+        border-radius: 3px;
+        font-size: 0.9em;
+        cursor: pointer;
+        user-select: none;
+        padding: 0;
+        line-height: 1;
+        transition: background 0.1s;
+    }
+    .ptz-b:hover { background: #3a4150; }
+    .ptz-b:active { background: #2a6df4; }
+    .ptz-b.ptz-home { color: #57d87a; }
+    .ptz-b.ptz-z { font-size: 1em; height: 26px; }
 
     .fs-overlay {
         display: none;
@@ -152,9 +286,7 @@
         z-index: 500;
         flex-direction: column;
     }
-    .fs-overlay.active {
-        display: flex;
-    }
+    .fs-overlay.active { display: flex; }
     .fs-toolbar {
         display: flex;
         justify-content: space-between;
@@ -176,26 +308,75 @@
         cursor: pointer;
         font-size: 1em;
     }
-    .fs-close:hover {
-        background: #cf4545;
+    .fs-close:hover { background: #cf4545; }
+    .fs-ptz-btn {
+        background: #2a6df4;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 1em;
     }
+    .fs-ptz-btn:hover { background: #1e5bd8; }
     .fs-body {
         flex: 1;
         overflow: hidden;
         padding: 0;
+        position: relative;
+    }
+    .fs-ptz-panel {
+        top: 20px;
+        right: 20px;
+        padding: 12px;
+    }
+    .fs-ptz-panel .ptz-grid {
+        grid-template-columns: repeat(3, 50px);
+        grid-template-rows: repeat(3, 50px);
+        gap: 4px;
+    }
+    .fs-ptz-panel .ptz-b {
+        font-size: 1.2em;
+    }
+    .fs-ptz-panel .ptz-z {
+        height: 40px;
+        font-size: 1.3em;
+    }
+    .fs-ptz-panel .ptz-header {
+        font-size: 0.9em;
     }
 </style>
 
 <script>
-const SERVER_HOST = window.location.hostname;
+    const SERVER_HOST = window.location.hostname;
 const WEBRTC_PORT = 8889;
 
+let _ptzCapabilities = {};
+let _ptzMoveLock = {};
+let _fsCameraId = null;
+
+// =====================================================================
+// Полноэкранный режим
+// =====================================================================
 function openFullscreen(cameraId, cameraName) {
     const overlay = document.getElementById('fs-overlay');
     const iframe = document.getElementById('fs-iframe');
     document.getElementById('fs-title').textContent = cameraName || cameraId;
+
     iframe.src = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT +
                  '/__raw_' + encodeURIComponent(cameraId) + '/';
+
+    _fsCameraId = cameraId;
+
+    const ptzBtn = document.getElementById('fs-ptz-btn');
+    const cap = _ptzCapabilities[cameraId];
+    if (cap && cap.has_ptz) {
+        ptzBtn.style.display = 'inline-block';
+    } else {
+        ptzBtn.style.display = 'none';
+        document.getElementById('fs-ptz-panel').style.display = 'none';
+    }
+
     overlay.classList.add('active');
     if (overlay.requestFullscreen) {
         overlay.requestFullscreen().catch(() => {});
@@ -205,9 +386,21 @@ function openFullscreen(cameraId, cameraName) {
 function closeFullscreen() {
     const overlay = document.getElementById('fs-overlay');
     document.getElementById('fs-iframe').src = '';
+    document.getElementById('fs-ptz-panel').style.display = 'none';
     overlay.classList.remove('active');
+    _fsCameraId = null;
+
     if (document.fullscreenElement && document.exitFullscreen) {
         document.exitFullscreen().catch(() => {});
+    }
+}
+
+function toggleFsPtzPanel() {
+    const panel = document.getElementById('fs-ptz-panel');
+    const visible = panel.style.display !== 'none';
+    panel.style.display = visible ? 'none' : 'block';
+    if (!visible) {
+        bindPtzButtons(panel, _fsCameraId);
     }
 }
 
@@ -226,6 +419,160 @@ document.addEventListener('fullscreenchange', function() {
         closeFullscreen();
     }
 });
+
+// =====================================================================
+// PTZ
+// =====================================================================
+async function loadPtzCapabilities() {
+    try {
+        const r = await fetch('/api/ptz/capabilities');
+        if (!r.ok) return;
+        const data = await r.json();
+        _ptzCapabilities = data.cameras || {};
+
+        document.querySelectorAll('.cam-ptz-btn').forEach(btn => {
+            const camId = btn.dataset.cameraId;
+            const cap = _ptzCapabilities[camId];
+            if (cap && cap.has_ptz) {
+                btn.style.display = 'inline-block';
+            }
+        });
+    } catch (e) {
+        console.error('loadPtzCapabilities failed:', e);
+    }
+}
+
+function togglePtzPanel(cameraId) {
+    const panel = document.getElementById('ptz-panel-' + cameraId);
+    if (!panel) return;
+
+    const visible = panel.style.display !== 'none';
+    panel.style.display = visible ? 'none' : 'block';
+
+    const btn = document.querySelector(
+        '.cam-ptz-btn[data-camera-id="' + cameraId + '"]');
+    if (btn) {
+        if (visible) btn.classList.remove('active');
+        else btn.classList.add('active');
+    }
+
+    if (!visible) {
+        bindPtzButtons(panel, cameraId);
+    }
+}
+
+function bindPtzButtons(container, cameraId) {
+    if (!container) return;
+
+    container.querySelectorAll('.ptz-b').forEach(btn => {
+        if (btn.dataset.bound === '1') return;
+        btn.dataset.bound = '1';
+
+        const dir = btn.dataset.dir;
+        const zoom = parseFloat(btn.dataset.zoom || '0');
+
+        if (dir === 'home') {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                ptzHome(cameraId);
+            });
+            return;
+        }
+
+        let pan = 0, tilt = 0;
+        if (dir === 'nw') { pan = -1; tilt = 1; }
+        else if (dir === 'n') { pan = 0; tilt = 1; }
+        else if (dir === 'ne') { pan = 1; tilt = 1; }
+        else if (dir === 'w') { pan = -1; tilt = 0; }
+        else if (dir === 'e') { pan = 1; tilt = 0; }
+        else if (dir === 'sw') { pan = -1; tilt = -1; }
+        else if (dir === 's') { pan = 0; tilt = -1; }
+        else if (dir === 'se') { pan = 1; tilt = -1; }
+
+        const start = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            ptzMove(cameraId, pan, tilt, zoom);
+        };
+        const stop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            ptzStop(cameraId);
+        };
+
+        btn.addEventListener('mousedown', start);
+        btn.addEventListener('mouseup', stop);
+        btn.addEventListener('mouseleave', stop);
+        btn.addEventListener('touchstart', start, { passive: false });
+        btn.addEventListener('touchend', stop, { passive: false });
+        btn.addEventListener('touchcancel', stop, { passive: false });
+    });
+}
+
+async function ptzMove(cameraId, pan, tilt, zoom) {
+    const cap = _ptzCapabilities[cameraId];
+    if (!cap || !cap.has_ptz || !cap.profile_token) return;
+
+    if (_ptzMoveLock[cameraId]) return;
+    _ptzMoveLock[cameraId] = true;
+
+    try {
+        await fetch('/api/cameras/' + encodeURIComponent(cameraId) + '/ptz/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                pan: pan, tilt: tilt, zoom: zoom,
+                duration: 0.4,
+                profile_token: cap.profile_token,
+            }),
+        });
+    } catch (e) {
+        // тихо
+    } finally {
+        setTimeout(() => { _ptzMoveLock[cameraId] = false; }, 100);
+    }
+}
+
+async function ptzStop(cameraId) {
+    const cap = _ptzCapabilities[cameraId];
+    if (!cap || !cap.has_ptz || !cap.profile_token) return;
+
+    try {
+        await fetch('/api/cameras/' + encodeURIComponent(cameraId) + '/ptz/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                profile_token: cap.profile_token,
+            }),
+        });
+    } catch (e) {
+        // тихо
+    }
+}
+
+async function ptzHome(cameraId) {
+    const cap = _ptzCapabilities[cameraId];
+    if (!cap || !cap.has_ptz || !cap.profile_token) return;
+
+    try {
+        await fetch('/api/cameras/' + encodeURIComponent(cameraId) + '/ptz/home', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                profile_token: cap.profile_token,
+            }),
+        });
+    } catch (e) {
+        // тихо
+    }
+}
+
+// =====================================================================
+// Инициализация
+// =====================================================================
+(function init() {
+    setTimeout(loadPtzCapabilities, 500);
+})();
 </script>
 
 {% endblock %}

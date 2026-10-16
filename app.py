@@ -115,7 +115,7 @@ from diagnostics import diagnostics_bp
 from mediamtx_manager import MediaMTXManager
 import mediamtx_manager as _mtx_helpers
 from preview import get_loopback_url, raw_path_name
-
+from events_manager import EventsManager
 
 # ======================================================================
 #  Конфиг
@@ -251,6 +251,21 @@ for cam_cfg in cameras_cfg:
         logger.exception("Не удалось инициализировать камеру %s: %s",
                          cam_cfg.get("id"), e)
 
+# ======================================================================
+#  Менеджер ONVIF-событий
+# ======================================================================
+events_manager: EventsManager | None = None
+try:
+    events_manager = EventsManager(
+        cameras_provider=lambda: cameras,
+        poll_interval=2.0,
+        subscription_ttl_min=10,
+    )
+    events_manager.start()
+    logger.info("EventsManager запущен (опрос каждые 2 сек)")
+except Exception as e:
+    logger.exception("Не удалось запустить EventsManager: %s", e)
+    events_manager = None
 
 # ======================================================================
 #  Flask
@@ -274,6 +289,7 @@ app.config["MEDIAMTX_HELPERS"] = {
     "build_raw_path_config": _mtx_helpers.build_raw_path_config,
     "build_stream_path_config": _mtx_helpers.build_stream_path_config,
 }
+app.config["EVENTS_MANAGER"] = events_manager
 app.config["LOOPBACK_URLS"] = loopback_urls
 
 app.register_blueprint(settings_bp)
@@ -486,6 +502,7 @@ def api_status():
 #  Запуск
 # ======================================================================
 if __name__ == "__main__":
+    # ---- MJPEG-дублирование ----
     duplicator = None
     if dup_cfg.get("enabled", False):
         duplicator = StreamDuplicator(cameras, dup_cfg, config)
@@ -501,28 +518,46 @@ if __name__ == "__main__":
     if loopback_urls:
         logger.info("Loopback-камеры: %s", list(loopback_urls.keys()))
 
+    # ---- Запуск и корректное завершение ----
     try:
         app.run(host=host, port=port, threaded=True, debug=False)
     finally:
         logger.info("Останавливаю компоненты...")
+
+        # 1. Менеджер событий (работает с камерами)
+        if events_manager:
+            try:
+                events_manager.stop()
+                logger.info("EventsManager остановлен")
+            except Exception:
+                logger.exception("Ошибка остановки EventsManager")
+
+        # 2. Рекордеры (пишут в архив)
         for rec in recorders.values():
             try:
                 rec.stop()
             except Exception:
                 pass
+
+        # 3. Камеры (читают raw-потоки)
         for cam in cameras.values():
             try:
                 cam.stop()
             except Exception:
                 pass
+
+        # 4. MJPEG-дублирование
         if duplicator:
             try:
                 duplicator.stop()
             except Exception:
                 pass
+
+        # 5. MediaMTX (последним — источник)
         if mediamtx:
             try:
                 mediamtx.stop()
             except Exception:
                 pass
+
         logger.info("Сервер остановлен")

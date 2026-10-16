@@ -1162,3 +1162,155 @@ def api_ptz_capabilities():
     _ptz_cache["ts"] = now
 
     return jsonify({"cameras": result})
+
+
+# ======================================================================
+# API: ONVIF Events — быстрая проверка
+# ======================================================================
+@settings_bp.route("/api/cameras/<camera_id>/events/test", methods=["POST"])
+@admin_required
+def api_events_test(camera_id: str):
+    """
+    Быстрая проверка: создаёт подписку, слушает pull_timeout секунд,
+    возвращает список полученных событий.
+    """
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+    if cam.type != "ip":
+        return jsonify({"error": "События доступны только для IP-камер"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        pull_timeout = int(payload.get("timeout", 5))
+        pull_timeout = max(2, min(pull_timeout, 30))
+    except (TypeError, ValueError):
+        pull_timeout = 5
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL камеры"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    logger.info("[%s] Events test: %s, таймаут %s сек",
+                camera_id, endpoint, pull_timeout)
+
+    try:
+        from onvif_events import test_events
+        result = test_events(
+            endpoint,
+            parsed.get("user", ""),
+            parsed.get("password", ""),
+            pull_timeout=pull_timeout,
+        )
+    except Exception as e:
+        logger.exception("Events test error")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify(result)
+
+
+# ======================================================================
+# API: журнал ONVIF-событий
+# ======================================================================
+@settings_bp.route("/api/events", methods=["GET"])
+@login_required
+def api_events_list():
+    """
+    Список событий с фильтрами.
+    Query:
+        camera_id — фильтр по камере
+        severity  — info | warning | alert
+        since_ts  — Unix timestamp, только новее
+        limit     — макс. число записей (по умолчанию 200)
+    """
+    em = current_app.config.get("EVENTS_MANAGER")
+    if not em:
+        return jsonify({"error": "Менеджер событий не запущен", "events": []}), 503
+
+    camera_id = request.args.get("camera_id") or None
+    severity = request.args.get("severity") or None
+
+    try:
+        since_ts = request.args.get("since_ts")
+        since_ts = float(since_ts) if since_ts else None
+    except (TypeError, ValueError):
+        since_ts = None
+
+    try:
+        limit = int(request.args.get("limit", 200))
+        limit = max(1, min(limit, 1000))
+    except (TypeError, ValueError):
+        limit = 200
+
+    try:
+        events = em.db.query(
+            camera_id=camera_id,
+            since_ts=since_ts,
+            severity=severity,
+            limit=limit,
+        )
+    except Exception as e:
+        logger.exception("Ошибка чтения событий")
+        return jsonify({"error": str(e), "events": []}), 500
+
+    return jsonify({
+        "ok": True,
+        "count": len(events),
+        "events": events,
+    })
+
+
+@settings_bp.route("/api/events/stats", methods=["GET"])
+@login_required
+def api_events_stats():
+    """Сводка по журналу событий."""
+    em = current_app.config.get("EVENTS_MANAGER")
+    if not em:
+        return jsonify({"error": "Менеджер событий не запущен"}), 503
+
+    try:
+        stats = em.db.stats()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"ok": True, "stats": stats})
+
+
+@settings_bp.route("/api/events/manager", methods=["GET"])
+@login_required
+def api_events_manager():
+    """Статус менеджера событий."""
+    em = current_app.config.get("EVENTS_MANAGER")
+    if not em:
+        return jsonify({
+            "ok": True,
+            "running": False,
+            "message": "Менеджер не запущен",
+        })
+    return jsonify({"ok": True, **em.get_status()})
+
+
+@settings_bp.route("/api/events/cleanup", methods=["POST"])
+@admin_required
+def api_events_cleanup():
+    """Принудительная чистка журнала событий."""
+    em = current_app.config.get("EVENTS_MANAGER")
+    if not em:
+        return jsonify({"error": "Менеджер не запущен"}), 503
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        max_age_days = int(payload.get("max_age_days", 30))
+        max_records = int(payload.get("max_records", 200000))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Неверные параметры"}), 400
+
+    try:
+        result = em.db.cleanup(max_age_days=max_age_days,
+                                max_records=max_records)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"ok": True, "result": result})

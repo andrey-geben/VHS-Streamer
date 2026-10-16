@@ -34,6 +34,7 @@ from __version__ import (
 # Пути и логирование
 # ----------------------------------------------------------------------
 from helper import app_dir, resource_dir
+from events_manager import EventsManager
 
 BASE_DIR = app_dir()                 # куда писать (рядом с .exe или корень проекта)
 RES_DIR = resource_dir()             # откуда читать шаблоны
@@ -107,6 +108,7 @@ if not bootstrap_is_ready():
 # ======================================================================
 from camera import Camera
 from recorder import Recorder
+from event_recorder import EventRecorder
 from duplicator import StreamDuplicator
 import auth as auth_mod
 from settings_api import settings_bp
@@ -222,6 +224,23 @@ if mediamtx:
             logger.error("Не удалось восстановить поток %s: %s",
                          stream_cfg.get("id"), e)
 
+# ======================================================================
+#  Менеджер ONVIF-событий
+# ======================================================================
+# Создаётся ДО камер и рекордеров, чтобы EventRecorder мог подписаться.
+events_manager: EventsManager | None = None
+try:
+    from events_manager import EventsManager
+    events_manager = EventsManager(
+        cameras_provider=lambda: cameras,
+        poll_interval=2.0,
+        subscription_ttl_min=10,
+    )
+    events_manager.start()
+    logger.info("EventsManager запущен (опрос каждые 2 сек)")
+except Exception as e:
+    logger.exception("Не удалось запустить EventsManager: %s", e)
+    events_manager = None
 
 # ======================================================================
 #  Камеры и рекордеры
@@ -239,15 +258,48 @@ for cam_cfg in cameras_cfg:
         cameras[cam.id] = cam
         cam.start()
 
-        record_enabled = (
+        # Архив включён глобально?
+        archive_on = (
             archive_cfg.get("enabled", False)
             and archive_cfg.get("record_all", True)
-            and cam_cfg.get("record", True)
         )
-        if record_enabled:
-            rec = Recorder(cam, archive_cfg, cam_cfg)
-            rec.start()
-            recorders[cam.id] = rec
+        # Режим записи камеры: off / always / events
+        # Поддержка старого формата: если record_mode нет,
+        # считаем record: true → always, record: false → off.
+        mode = cam_cfg.get("record_mode")
+        if mode is None:
+            mode = "always" if cam_cfg.get("record", False) else "off"
+        if not archive_on:
+            mode = "off"
+
+        if mode == "off":
+            logger.info("[%s] Запись в архив отключена", cam.id)
+        elif mode == "always":
+            try:
+                rec = Recorder(cam, archive_cfg, cam_cfg)
+                rec.start()
+                recorders[cam.id] = rec
+                logger.info("[%s] Режим записи: постоянная", cam.id)
+            except Exception:
+                logger.exception("[%s] Ошибка создания Recorder", cam.id)
+        elif mode == "events":
+            if not events_manager:
+                logger.warning(
+                    "[%s] Режим записи 'events', но EventsManager "
+                    "не запущен — пропускаю", cam.id,
+                )
+            else:
+                try:
+                    rec = EventRecorder(
+                        cam, archive_cfg, cam_cfg, events_manager,
+                    )
+                    rec.start()
+                    recorders[cam.id] = rec
+                    logger.info("[%s] Режим записи: по событиям", cam.id)
+                except Exception:
+                    logger.exception(
+                        "[%s] Ошибка создания EventRecorder", cam.id,
+                    )
     except Exception as e:
         logger.exception("Не удалось инициализировать камеру %s: %s",
                          cam_cfg.get("id"), e)

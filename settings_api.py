@@ -128,6 +128,8 @@ def _validate_camera(payload: dict) -> tuple[bool, str]:
     return True, ""
 
 
+
+
 def _camera_to_dict(cam: Camera) -> dict:
     return {
         "id": cam.id,
@@ -145,6 +147,9 @@ def _camera_to_dict(cam: Camera) -> dict:
         "audio": cam.audio,
         "archive_path": getattr(cam, "archive_path", ""),
         "record": getattr(cam, "record", False),
+        "record_mode": getattr(cam, "record_mode", "off"),
+        "event_record_duration": getattr(cam, "event_record_duration", 30),
+        "event_topics": getattr(cam, "event_topics", []),
         "connected": cam._connected,
         "last_error": cam._last_error,
     }
@@ -195,8 +200,17 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
             has_audio = bool(ha)
         audio = bool(payload.get("audio", False)) and (has_audio is True)
 
-    # Запись в архив — по умолчанию выключена
-    record = bool(payload.get("record", False))
+    # Режим записи: off / always / events
+    record_mode = str(payload.get("record_mode") or "").strip()
+    if record_mode not in ("off", "always", "events"):
+        # Поддержка старого формата: record: true/false
+        if payload.get("record") is True:
+            record_mode = "always"
+        else:
+            record_mode = "off"
+
+    # Совместимость: record = (режим != off)
+    record = (record_mode != "off")
 
     # Индивидуальный путь архива — только если включена запись
     archive_path = ""
@@ -204,6 +218,27 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
         ap = payload.get("archive_path")
         if ap:
             archive_path = str(ap).strip()
+
+    # Параметры записи по событиям
+    try:
+        event_record_duration = int(
+            payload.get("event_record_duration", 30)
+        )
+        if event_record_duration < 5:
+            event_record_duration = 5
+        if event_record_duration > 3600:
+            event_record_duration = 3600
+    except (TypeError, ValueError):
+        event_record_duration = 30
+
+    raw_topics = payload.get("event_topics")
+    if isinstance(raw_topics, list):
+        allowed = {"motion", "input", "tamper", "storage", "network"}
+        event_topics = [t for t in raw_topics if t in allowed]
+    else:
+        event_topics = ["motion", "input", "tamper"]
+    if not event_topics:
+        event_topics = ["motion"]
 
     cfg = {
         "id": cam_id,
@@ -216,6 +251,9 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
         "height": int(payload.get("height", 480)),
         "record": record,
         "archive_path": archive_path,
+        "record_mode": record_mode,
+        "event_record_duration": event_record_duration,
+        "event_topics": event_topics,
         "transport": payload.get("transport") or None,
         "open_timeout_ms": int(payload.get("open_timeout_ms", 5000)),
         "read_timeout_ms": int(payload.get("read_timeout_ms", 5000)),
@@ -385,15 +423,33 @@ def api_add_camera():
     st["cameras"][cam_id] = cam
 
     archive_cfg = st["config"].get("archive", {})
-    if (new_cfg.get("record", False)
-            and archive_cfg.get("enabled", False)
-            and archive_cfg.get("record_all", True)):
+    mode = new_cfg.get("record_mode", "off")
+    archive_on = (
+            archive_cfg.get("enabled", False)
+            and archive_cfg.get("record_all", True)
+    )
+
+    if archive_on and mode == "always":
         try:
-            rec = Recorder(cam, archive_cfg, new_cfg)
+            rec = Recorder(new_cam, archive_cfg, new_cfg)
             rec.start()
-            st["recorders"][cam_id] = rec
+            st["recorders"][camera_id] = rec
         except Exception:
-            logger.exception("Ошибка создания рекордера")
+            logger.exception("Ошибка создания Recorder")
+    elif archive_on and mode == "events":
+        em = current_app.config.get("EVENTS_MANAGER")
+        if not em:
+            logger.warning(
+                "Режим 'events' для %s, но EventsManager не запущен",
+                camera_id,
+            )
+        else:
+            try:
+                rec = EventRecorder(new_cam, archive_cfg, new_cfg, em)
+                rec.start()
+                st["recorders"][camera_id] = rec
+            except Exception:
+                logger.exception("Ошибка создания EventRecorder")
 
     st["config"].setdefault("cameras", []).append(new_cfg)
     _save_config(st["config"], st["config_path"])
@@ -775,6 +831,9 @@ def api_onvif_add_camera():
         "height": int(payload.get("height", 720)),
         "record": bool(payload.get("record", False)),
         "archive_path": "",
+        "record_mode": record_mode,
+        "event_record_duration": event_record_duration,
+        "event_topics": event_topics,
         "transport": "tcp",
         "open_timeout_ms": 5000,
         "read_timeout_ms": 5000,
@@ -796,15 +855,32 @@ def api_onvif_add_camera():
     st["cameras"][cam_id] = cam
 
     archive_cfg = st["config"].get("archive", {})
-    if (new_cfg.get("record", False)
-            and archive_cfg.get("enabled", False)
-            and archive_cfg.get("record_all", True)):
+    mode = new_cfg.get("record_mode", "off")
+    archive_on = (
+            archive_cfg.get("enabled", False)
+            and archive_cfg.get("record_all", True)
+    )
+
+    if archive_on and mode == "always":
         try:
             rec = Recorder(cam, archive_cfg, new_cfg)
             rec.start()
             st["recorders"][cam_id] = rec
         except Exception:
-            logger.exception("Ошибка создания рекордера")
+            logger.exception("Ошибка создания Recorder")
+    elif archive_on and mode == "events":
+        em = current_app.config.get("EVENTS_MANAGER")
+        if not em:
+            logger.warning(
+                "Режим 'events' для %s, но EventsManager не запущен", cam_id,
+            )
+        else:
+            try:
+                rec = EventRecorder(cam, archive_cfg, new_cfg, em)
+                rec.start()
+                st["recorders"][cam_id] = rec
+            except Exception:
+                logger.exception("Ошибка создания EventRecorder")
 
     st["config"].setdefault("cameras", []).append(new_cfg)
     _save_config(st["config"], st["config_path"])

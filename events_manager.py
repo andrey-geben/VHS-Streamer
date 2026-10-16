@@ -317,6 +317,9 @@ class EventsManager:
         self._dedup_cache = {}
                 # Камеры без ONVIF Events — не проверяем повторно
         self._no_events_cams = set()
+        # Подписчики на события (рекордеры и т.п.)
+        self._subscribers = []
+        self._sub_lock = threading.Lock()
 
         self.started_at = 0.0
         self.events_saved = 0
@@ -490,6 +493,10 @@ class EventsManager:
                         event.get("topic_short") or topic,
                         group,
                         is_active)
+
+            # Уведомить подписчиков (рекордеры по событиям)
+            self._notify_subscribers(cam_id, event)
+
             return True
         except Exception as e:
             logger.exception("[%s] Ошибка сохранения события: %s", cam_id, e)
@@ -543,3 +550,27 @@ class EventsManager:
             "last_error": self.last_error,
             "db_stats": stats,
         }
+
+    def subscribe(self, callback):
+        """
+        Подписка на события. Callback вызывается как callback(camera_id, event).
+        Используется EventRecorder для триггера записи.
+        """
+        with self._sub_lock:
+            self._subscribers.append(callback)
+        logger.debug("EventsManager: добавлен подписчик %s", callback)
+
+    def unsubscribe(self, callback):
+        with self._sub_lock:
+            if callback in self._subscribers:
+                self._subscribers.remove(callback)
+        logger.debug("EventsManager: удалён подписчик %s", callback)
+
+    def _notify_subscribers(self, cam_id, event):
+        with self._sub_lock:
+            subs = list(self._subscribers)
+        for cb in subs:
+            try:
+                cb(cam_id, event)
+            except Exception as e:
+                logger.debug("EventsManager: ошибка подписчика: %s", e)

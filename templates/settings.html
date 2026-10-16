@@ -82,7 +82,7 @@
         <input type="text" id="arch-path" placeholder="./archive"></div>
     <p class="muted" style="margin-top:-4px; margin-bottom:12px">
         Индивидуальный путь для каждой камеры задаётся в её настройках
-        (галочка «Писать в архив»).
+        (режим записи «Постоянная» или «По событиям»).
     </p>
     <div class="form-row"><label>Длина сегмента (мин)</label>
         <input type="number" id="arch-segment" min="1" max="120"></div>
@@ -226,7 +226,7 @@
 </div>
 {% endif %}
 
-<!-- ============= СТИЛИ МОДАЛКИ КАМЕРЫ ============= -->
+<!-- ============= СТИЛИ МОДАЛКИ ============= -->
 <style>
     #camera-modal .cam-modal-body .form-row {
         display: grid !important;
@@ -261,7 +261,6 @@
         justify-self: start;
         width: auto;
     }
-
     #camera-modal .autofill-box {
         background: #14161a;
         border: 1px solid #2a2f37;
@@ -300,8 +299,6 @@
         width: 100%;
         box-sizing: border-box;
     }
-
-    /* PTZ-панель */
     #camera-modal .ptz-btn {
         background: #2a2f37;
         color: #e8e8e8;
@@ -349,14 +346,12 @@
                 display:flex; flex-direction:column;
                 overflow:hidden;">
 
-        <!-- Заголовок -->
         <div style="padding:20px 28px 12px;
                     border-bottom:1px solid #2a2f37;
                     flex-shrink:0;">
             <h3 style="margin:0" id="modal-title">Камера</h3>
         </div>
 
-        <!-- Скроллируемое содержимое -->
         <div class="cam-modal-body" style="padding:18px 28px; flex:1; overflow-y:auto; overflow-x:hidden;">
 
             <div class="form-row"><label>ID (латиница)</label>
@@ -371,7 +366,6 @@
                     <option value="analog">Аналоговая (USB/карта)</option>
                 </select></div>
 
-            <!-- Блок автозаполнения RTSP -->
             <div id="m-ip-autofill" class="autofill-box" style="display:none">
                 <div class="title">
                     Быстрое заполнение RTSP (Hikvision, Dahua, Reolink, Axis)
@@ -447,13 +441,14 @@
                       style="font-size:0.85em; white-space:nowrap"></span>
             </div>
 
-            <!-- Архив -->
-            <div class="form-row checkbox-row">
-                <label>Писать в архив</label>
-                <input type="checkbox" id="m-record" onchange="onRecordToggle()">
-                <span class="muted" style="grid-column:2; font-size:0.8em">
-                    по умолчанию выключено
-                </span>
+            <!-- Архив: режим записи -->
+            <div class="form-row">
+                <label>Режим записи</label>
+                <select id="m-record-mode" onchange="onRecordModeChange()">
+                    <option value="off">Отключена</option>
+                    <option value="always">Постоянная (DVR)</option>
+                    <option value="events">Только по событиям</option>
+                </select>
             </div>
 
             <div class="form-row" id="row-archive-path" style="display:none">
@@ -473,7 +468,61 @@
                 используется глобальный путь из раздела «Архив».
             </p>
 
-            <!-- ============ PTZ-панель ============ -->
+            <!-- Параметры записи по событиям -->
+            <div class="form-row" id="row-event-duration" style="display:none">
+                <label>Длительность записи (сек)</label>
+                <input type="number" id="m-event-duration" value="30"
+                       min="5" max="3600">
+            </div>
+            <p class="hint" id="event-duration-hint"
+               style="display:none;
+                      margin-left:182px;
+                      font-size:0.82em;
+                      color:#8b96a5;
+                      line-height:1.5;
+                      margin-top:-4px;">
+                Сколько секунд писать после срабатывания события. Если за это
+                время приходит новое событие — запись продлевается.
+            </p>
+
+            <div class="form-row" id="row-event-topics"
+                 style="display:none; align-items:flex-start">
+                <label style="padding-top:6px">Типы событий</label>
+                <div style="display:flex; flex-direction:column; gap:4px">
+                    <label style="font-size:0.9em; color:#e8e8e8;
+                                  display:flex; align-items:center; gap:8px">
+                        <input type="checkbox" class="m-event-topic"
+                               value="motion" checked>
+                        Движение
+                    </label>
+                    <label style="font-size:0.9em; color:#e8e8e8;
+                                  display:flex; align-items:center; gap:8px">
+                        <input type="checkbox" class="m-event-topic"
+                               value="input">
+                        Тревожный вход
+                    </label>
+                    <label style="font-size:0.9em; color:#e8e8e8;
+                                  display:flex; align-items:center; gap:8px">
+                        <input type="checkbox" class="m-event-topic"
+                               value="tamper">
+                        Вскрытие корпуса
+                    </label>
+                    <label style="font-size:0.9em; color:#e8e8e8;
+                                  display:flex; align-items:center; gap:8px">
+                        <input type="checkbox" class="m-event-topic"
+                               value="storage">
+                        Проблемы с носителем
+                    </label>
+                    <label style="font-size:0.9em; color:#e8e8e8;
+                                  display:flex; align-items:center; gap:8px">
+                        <input type="checkbox" class="m-event-topic"
+                               value="network">
+                        Потеря сети
+                    </label>
+                </div>
+            </div>
+
+            <!-- PTZ -->
             <div id="m-ptz-section"
                  style="display:none; margin-top:20px;
                         padding-top:16px;
@@ -490,7 +539,6 @@
                             grid-template-columns: 200px 130px 1fr;
                             gap:20px; align-items:start;">
 
-                    <!-- Стрелки -->
                     <div>
                         <div style="font-size:0.85em; color:#8b96a5;
                                     margin-bottom:6px; text-align:center;">
@@ -499,44 +547,31 @@
                         <div style="display:grid;
                                     grid-template-columns: repeat(3, 1fr);
                                     gap:4px;">
-                            <button class="ptz-btn" type="button"
-                                    data-pan="-1" data-tilt="1">↖</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="0" data-tilt="1">↑</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="1" data-tilt="1">↗</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="-1" data-tilt="0">←</button>
-                            <button class="ptz-btn ptz-home" type="button"
-                                    title="В исходное положение">⌂</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="1" data-tilt="0">→</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="-1" data-tilt="-1">↙</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="0" data-tilt="-1">↓</button>
-                            <button class="ptz-btn" type="button"
-                                    data-pan="1" data-tilt="-1">↘</button>
+                            <button class="ptz-btn" type="button" data-pan="-1" data-tilt="1">↖</button>
+                            <button class="ptz-btn" type="button" data-pan="0" data-tilt="1">↑</button>
+                            <button class="ptz-btn" type="button" data-pan="1" data-tilt="1">↗</button>
+                            <button class="ptz-btn" type="button" data-pan="-1" data-tilt="0">←</button>
+                            <button class="ptz-btn ptz-home" type="button" title="В исходное положение">⌂</button>
+                            <button class="ptz-btn" type="button" data-pan="1" data-tilt="0">→</button>
+                            <button class="ptz-btn" type="button" data-pan="-1" data-tilt="-1">↙</button>
+                            <button class="ptz-btn" type="button" data-pan="0" data-tilt="-1">↓</button>
+                            <button class="ptz-btn" type="button" data-pan="1" data-tilt="-1">↘</button>
                         </div>
                     </div>
 
-                    <!-- Зум -->
                     <div>
                         <div style="font-size:0.85em; color:#8b96a5;
                                     margin-bottom:6px; text-align:center;">
                             Зум
                         </div>
                         <div style="display:grid; grid-template-columns: 1fr; gap:4px;">
-                            <button class="ptz-btn" type="button"
-                                    data-zoom="1"
+                            <button class="ptz-btn" type="button" data-zoom="1"
                                     style="height:60px; font-size:1.4em;">＋</button>
-                            <button class="ptz-btn" type="button"
-                                    data-zoom="-1"
+                            <button class="ptz-btn" type="button" data-zoom="-1"
                                     style="height:60px; font-size:1.4em;">−</button>
                         </div>
                     </div>
 
-                    <!-- Пресеты -->
                     <div>
                         <div style="display:flex; justify-content:space-between;
                                     align-items:center; margin-bottom:6px;">
@@ -557,7 +592,6 @@
 
         </div>
 
-        <!-- Кнопки -->
         <div style="padding:14px 28px 20px;
                     border-top:1px solid #2a2f37;
                     text-align:right;
@@ -628,7 +662,10 @@
 </div>
 
 <script>
-    async function api(method, url, body) {
+// =====================================================================
+// Общие утилиты
+// =====================================================================
+async function api(method, url, body) {
     const opts = { method, headers: { 'Accept': 'application/json' } };
     if (body !== undefined) {
         opts.headers['Content-Type'] = 'application/json';
@@ -679,8 +716,13 @@ let cameraVendors = null;
 let selectedPresetId = 'mobile';
 let _onvifDevices = [];
 let _onvifCurrentDevice = null;
+let _ptzProfileToken = null;
+let _ptzBound = false;
 const MAX_PER_CAMERA = 3;
 
+// =====================================================================
+// КАМЕРЫ
+// =====================================================================
 async function loadCameras() {
     camerasList = await api('GET', '/api/cameras');
     const tbody = document.querySelector('#cameras-table tbody');
@@ -710,13 +752,20 @@ async function loadCameras() {
             if (v) vendorCell = escapeHtml(v);
         }
 
-        const recordCell = c.record
-            ? '<span class="status-on" title="запись включена">● вкл</span>'
-            : '<span class="muted">○ выкл</span>';
+        let recordCell;
+        const rmode = c.record_mode || (c.record ? 'always' : 'off');
+        if (rmode === 'off') {
+            recordCell = '<span class="muted">○ выкл</span>';
+        } else if (rmode === 'always') {
+            recordCell = '<span class="status-on" title="постоянная">● DVR</span>';
+        } else if (rmode === 'events') {
+            recordCell = '<span style="color:#f5b944" title="по событиям">● Соб.</span>';
+        } else {
+            recordCell = '<span class="muted">?</span>';
+        }
 
-        // PTZ: показываем "?" — реальная проверка только в модалке
         const ptzCell = (c.type === 'ip')
-            ? '<span class="muted" title="Проверяется в модалке камеры">?</span>'
+            ? '<span class="muted" title="Проверяется в модалке">?</span>'
             : '<span class="muted">—</span>';
 
         tr.innerHTML = `
@@ -762,7 +811,6 @@ function updateIpAutofillVisibility() {
     const type = document.getElementById('m-type').value;
     const block = document.getElementById('m-ip-autofill');
     block.style.display = (type === 'ip') ? 'block' : 'none';
-
     if (type !== 'ip') {
         const ptz = document.getElementById('m-ptz-section');
         if (ptz) ptz.style.display = 'none';
@@ -793,7 +841,6 @@ function onVendorChange() {
     const vendorKey = document.getElementById('m-vendor').value;
     const selStream = document.getElementById('m-vendor-stream');
     selStream.innerHTML = '';
-
     if (!vendorKey || !cameraVendors) {
         selStream.innerHTML = '<option value="">— сначала выберите вендора —</option>';
         return;
@@ -809,7 +856,6 @@ function onVendorChange() {
         opt.textContent = s.label;
         selStream.appendChild(opt);
     });
-
     if (v.default_port) {
         document.getElementById('m-port').value = v.default_port;
     }
@@ -827,7 +873,6 @@ async function autofillRtsp() {
         showToast('Заполните вендора, IP и поток', true);
         return;
     }
-
     try {
         const r = await api('POST', '/api/camera_templates/autofill', {
             vendor, host, port, stream_id, user, password,
@@ -838,12 +883,19 @@ async function autofillRtsp() {
 }
 
 // =====================================================================
-// ЗАПИСЬ В АРХИВ
+// ЗАПИСЬ В АРХИВ — режим
 // =====================================================================
-function onRecordToggle() {
-    const on = document.getElementById('m-record').checked;
+function onRecordModeChange() {
+    const mode = document.getElementById('m-record-mode').value;
+    const on = (mode !== 'off');
+
     document.getElementById('row-archive-path').style.display = on ? 'grid' : 'none';
     document.getElementById('archive-path-hint').style.display = on ? 'block' : 'none';
+
+    const isEvents = (mode === 'events');
+    document.getElementById('row-event-duration').style.display = isEvents ? 'grid' : 'none';
+    document.getElementById('event-duration-hint').style.display = isEvents ? 'block' : 'none';
+    document.getElementById('row-event-topics').style.display = isEvents ? 'grid' : 'none';
 }
 
 // =====================================================================
@@ -868,12 +920,20 @@ function openCameraModal(cameraId) {
         document.getElementById('m-width').value = c.width;
         document.getElementById('m-height').value = c.height;
         document.getElementById('m-audio').checked = !!c.audio;
-        document.getElementById('m-record').checked = !!c.record;
         document.getElementById('m-archive-path').value = c.archive_path || '';
         document.getElementById('probe-audio-status').textContent =
             (c.has_audio === null || c.has_audio === undefined)
-                ? ''
-                : (c.has_audio ? '✓ звук найден' : '✗ звука нет');
+                ? '' : (c.has_audio ? '✓ звук найден' : '✗ звука нет');
+
+        const mode = c.record_mode || (c.record ? 'always' : 'off');
+        document.getElementById('m-record-mode').value = mode;
+        document.getElementById('m-event-duration').value =
+            c.event_record_duration || 30;
+
+        const topics = c.event_topics || ['motion', 'input', 'tamper'];
+        document.querySelectorAll('.m-event-topic').forEach(cb => {
+            cb.checked = topics.includes(cb.value);
+        });
     } else {
         document.getElementById('m-id').value = '';
         document.getElementById('m-id').disabled = false;
@@ -886,7 +946,6 @@ function openCameraModal(cameraId) {
         document.getElementById('m-width').value = 640;
         document.getElementById('m-height').value = 480;
         document.getElementById('m-audio').checked = false;
-        document.getElementById('m-record').checked = false;
         document.getElementById('m-archive-path').value = '';
         document.getElementById('probe-audio-status').textContent = '';
         document.getElementById('m-vendor').value = '';
@@ -896,9 +955,14 @@ function openCameraModal(cameraId) {
         document.getElementById('m-ip-pass').value = '';
         document.getElementById('m-vendor-stream').innerHTML =
             '<option value="">— сначала выберите вендора —</option>';
+        document.getElementById('m-record-mode').value = 'off';
+        document.getElementById('m-event-duration').value = 30;
+        document.querySelectorAll('.m-event-topic').forEach(cb => {
+            cb.checked = (cb.value === 'motion');
+        });
     }
     updateAudioRowVisibility();
-    onRecordToggle();
+    onRecordModeChange();
     loadPtzInfo(cameraId);
     document.getElementById('camera-modal').style.display = 'flex';
 }
@@ -949,6 +1013,13 @@ async function saveCamera() {
     if (probeStatus.startsWith('✓')) hasAudio = true;
     else if (probeStatus.startsWith('✗')) hasAudio = false;
 
+    const eventTopics = [];
+    document.querySelectorAll('.m-event-topic').forEach(cb => {
+        if (cb.checked) eventTopics.push(cb.value);
+    });
+
+    const recordMode = document.getElementById('m-record-mode').value;
+
     const payload = {
         id: document.getElementById('m-id').value.trim(),
         name: document.getElementById('m-name').value.trim(),
@@ -959,8 +1030,11 @@ async function saveCamera() {
         fps: parseInt(document.getElementById('m-fps').value) || 25,
         width: parseInt(document.getElementById('m-width').value) || 640,
         height: parseInt(document.getElementById('m-height').value) || 480,
-        record: document.getElementById('m-record').checked,
+        record: (recordMode !== 'off'),
+        record_mode: recordMode,
         archive_path: document.getElementById('m-archive-path').value.trim(),
+        event_record_duration: parseInt(document.getElementById('m-event-duration').value) || 30,
+        event_topics: eventTopics,
         has_audio: hasAudio,
         audio: document.getElementById('m-audio').checked,
     };
@@ -1000,13 +1074,9 @@ async function restartCamera(id) {
 // =====================================================================
 // PTZ
 // =====================================================================
-let _ptzProfileToken = null;
-let _ptzBound = false;
-
 async function loadPtzInfo(cameraId) {
     const section = document.getElementById('m-ptz-section');
     const status = document.getElementById('m-ptz-status');
-
     section.style.display = 'none';
     _ptzProfileToken = null;
 
@@ -1015,21 +1085,17 @@ async function loadPtzInfo(cameraId) {
     if (!c || c.type !== 'ip') return;
 
     status.textContent = 'проверяю...';
-
     try {
         const r = await api('GET',
             '/api/cameras/' + encodeURIComponent(cameraId) + '/ptz/info');
-
         if (!r.ok || !r.has_ptz) {
             section.style.display = 'none';
             return;
         }
-
         _ptzProfileToken = r.profile_token;
         status.textContent = 'profile: ' + (r.profile_token || '—');
         renderPtzPresets(r.presets || []);
         section.style.display = 'block';
-
         if (!_ptzBound) {
             bindPtzButtons();
             _ptzBound = true;
@@ -1043,9 +1109,7 @@ function renderPtzPresets(presets) {
     const box = document.getElementById('m-ptz-presets');
     box.innerHTML = '';
     if (!presets.length) {
-        box.innerHTML =
-            '<div class="muted" style="font-size:0.85em; padding:4px;">' +
-            'нет пресетов</div>';
+        box.innerHTML = '<div class="muted" style="font-size:0.85em; padding:4px;">нет пресетов</div>';
         return;
     }
     presets.forEach(p => {
@@ -1056,11 +1120,9 @@ function renderPtzPresets(presets) {
             '<span class="name" title="' + escapeHtml(p.name) + '">' +
                 escapeHtml(p.name) + '</span>' +
             '<button class="btn-mini" type="button" ' +
-                'onclick="ptzGotoPreset(\'' + safeToken + '\')" ' +
-                'title="Перейти к пресету">▶</button>' +
+                'onclick="ptzGotoPreset(\'' + safeToken + '\')" title="Перейти">▶</button>' +
             '<button class="btn-mini danger" type="button" ' +
-                'onclick="ptzRemovePreset(\'' + safeToken + '\')" ' +
-                'title="Удалить">✕</button>';
+                'onclick="ptzRemovePreset(\'' + safeToken + '\')" title="Удалить">✕</button>';
         box.appendChild(row);
     });
 }
@@ -1070,15 +1132,10 @@ async function ptzMove(pan, tilt, zoom) {
     if (mode !== 'edit') return;
     const id = document.getElementById('m-id').value.trim();
     if (!id || !_ptzProfileToken) return;
-
     try {
         await api('POST',
             '/api/cameras/' + encodeURIComponent(id) + '/ptz/move',
-            {
-                pan: pan, tilt: tilt, zoom: zoom,
-                duration: 0.3,
-                profile_token: _ptzProfileToken,
-            });
+            { pan, tilt, zoom, duration: 0.3, profile_token: _ptzProfileToken });
     } catch (e) {}
 }
 
@@ -1087,7 +1144,6 @@ async function ptzStop() {
     if (mode !== 'edit') return;
     const id = document.getElementById('m-id').value.trim();
     if (!id || !_ptzProfileToken) return;
-
     try {
         await api('POST',
             '/api/cameras/' + encodeURIComponent(id) + '/ptz/stop',
@@ -1112,10 +1168,7 @@ async function ptzGotoPreset(token) {
     try {
         await api('POST',
             '/api/cameras/' + encodeURIComponent(id) + '/ptz/preset/goto',
-            {
-                profile_token: _ptzProfileToken,
-                preset_token: token,
-            });
+            { profile_token: _ptzProfileToken, preset_token: token });
         showToast('PTZ: переход к пресету');
     } catch (e) {}
 }
@@ -1127,10 +1180,7 @@ async function ptzRemovePreset(token) {
     try {
         await api('POST',
             '/api/cameras/' + encodeURIComponent(id) + '/ptz/preset/remove',
-            {
-                profile_token: _ptzProfileToken,
-                preset_token: token,
-            });
+            { profile_token: _ptzProfileToken, preset_token: token });
         showToast('Пресет удалён');
         const r = await api('GET',
             '/api/cameras/' + encodeURIComponent(id) + '/ptz/info');
@@ -1147,10 +1197,7 @@ async function ptzSavePreset() {
     try {
         const r = await api('POST',
             '/api/cameras/' + encodeURIComponent(id) + '/ptz/preset/set',
-            {
-                profile_token: _ptzProfileToken,
-                name: name,
-            });
+            { profile_token: _ptzProfileToken, name });
         if (r.ok) {
             showToast('Пресет сохранён');
             const info = await api('GET',
@@ -1168,20 +1215,11 @@ function bindPtzButtons() {
             btn.addEventListener('click', ptzHome);
             return;
         }
-
         const pan = parseFloat(btn.dataset.pan || '0');
         const tilt = parseFloat(btn.dataset.tilt || '0');
         const zoom = parseFloat(btn.dataset.zoom || '0');
-
-        const start = (e) => {
-            e.preventDefault();
-            ptzMove(pan, tilt, zoom);
-        };
-        const stop = (e) => {
-            e.preventDefault();
-            ptzStop();
-        };
-
+        const start = (e) => { e.preventDefault(); ptzMove(pan, tilt, zoom); };
+        const stop = (e) => { e.preventDefault(); ptzStop(); };
         btn.addEventListener('mousedown', start);
         btn.addEventListener('mouseup', stop);
         btn.addEventListener('mouseleave', stop);
@@ -1228,7 +1266,6 @@ async function loadTranscodeCodecs() {
     try {
         const data = await api('GET', '/api/transcode/codecs');
         transcodeCodecs = data;
-
         const sel = document.getElementById('tc-codec');
         sel.innerHTML = '';
         (data.available || []).forEach(c => {
@@ -1238,7 +1275,6 @@ async function loadTranscodeCodecs() {
             sel.appendChild(opt);
         });
         if (data.recommended) sel.value = data.recommended;
-
         updateCodecNote();
         renderPresetButtons(data.presets || []);
         selectedPresetId = 'mobile';
@@ -1274,10 +1310,7 @@ function renderPresetButtons(presets) {
         btn.textContent = p.label;
         btn.style.padding = '6px 12px';
         btn.style.fontSize = '0.85em';
-        btn.onclick = () => {
-            selectedPresetId = p.id;
-            applyPreset(p.id);
-        };
+        btn.onclick = () => { selectedPresetId = p.id; applyPreset(p.id); };
         container.appendChild(btn);
     });
 }
@@ -1286,19 +1319,12 @@ function applyPreset(presetId) {
     if (!transcodeCodecs) return;
     const preset = (transcodeCodecs.presets || []).find(p => p.id === presetId);
     if (!preset) return;
-
     document.getElementById('tc-bitrate').value = preset.bitrate || '';
     document.getElementById('tc-scale').value = preset.scale || '';
     document.getElementById('tc-fps').value = preset.fps || 25;
-
     document.querySelectorAll('#tc-presets button').forEach(b => {
-        if (b.dataset.presetId === presetId) {
-            b.className = 'btn';
-        } else {
-            b.className = 'btn secondary';
-        }
+        b.className = (b.dataset.presetId === presetId) ? 'btn' : 'btn secondary';
     });
-
     updateLoadEstimate();
 }
 
@@ -1306,13 +1332,11 @@ function updateLoadEstimate() {
     const scale = document.getElementById('tc-scale').value || '640:-2';
     const fps = parseInt(document.getElementById('tc-fps').value) || 15;
     const codec = document.getElementById('tc-codec').value;
-
     let targetH = 360;
     try {
         const w = parseInt(scale.split(':')[0]);
         if (!isNaN(w)) targetH = Math.round(w * 9 / 16);
     } catch (e) {}
-
     let cpuPct;
     if (codec === 'libx264') {
         cpuPct = Math.round(targetH * fps / 25 * 0.08);
@@ -1320,14 +1344,12 @@ function updateLoadEstimate() {
         cpuPct = 3;
     }
     cpuPct = Math.max(cpuPct, 1);
-
     const el = document.getElementById('tc-load');
     let color = '#57d87a';
     let level = 'низкая';
     if (cpuPct > 80) { color = '#f16a6a'; level = 'критическая'; }
     else if (cpuPct > 40) { color = '#f5b944'; level = 'средняя'; }
     else if (cpuPct > 15) { color = '#f5b944'; level = 'умеренная'; }
-
     el.innerHTML =
         `Оценка нагрузки: <span style="color:${color}">${level}</span> ` +
         `(~${cpuPct}% одного ядра CPU) · ${targetH}p × ${fps} fps`;
@@ -1453,10 +1475,8 @@ async function createStream() {
         showLimitModal(cameraId, cam.name, existing, transcode, transcodePayload);
         return;
     }
-
     const payload = { camera_id: cameraId, transcode: transcode };
     if (transcodePayload) Object.assign(payload, transcodePayload);
-
     try {
         const r = await api('POST', '/api/streams', payload);
         showToast('Поток создан: ' + r.stream.path);
@@ -1542,41 +1562,31 @@ async function onvifDiscover() {
     const status = document.getElementById('onvif-status');
     btn.disabled = true;
     status.textContent = 'сканирую сеть (до 5 сек)...';
-
     try {
         const r = await api('POST', '/api/onvif/discover', { timeout: 4 });
         _onvifDevices = r.devices || [];
-
         const resultsDiv = document.getElementById('onvif-results');
         const tbody = document.querySelector('#onvif-table tbody');
         tbody.innerHTML = '';
-
         if (_onvifDevices.length === 0) {
             status.textContent = 'не найдено ни одной камеры';
             resultsDiv.style.display = 'none';
             return;
         }
-
         _onvifDevices.forEach(d => {
             const tr = document.createElement('tr');
             const nameModel = [
                 d.name ? escapeHtml(d.name) : '',
                 d.hardware ? escapeHtml(d.hardware) : '',
             ].filter(Boolean).join(' / ') || '<span class="muted">—</span>';
-
             tr.innerHTML =
                 '<td><b>' + escapeHtml(d.ip) + '</b></td>' +
                 '<td>' + nameModel + '</td>' +
-                '<td style="font-size:0.85em; color:#8b96a5">' +
-                    escapeHtml(d.endpoint) + '</td>' +
-                '<td>' +
-                    '<button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
-                    'onclick="openOnvifModal(\'' + escapeHtml(d.endpoint) + '\')">' +
-                    'Подключить</button>' +
-                '</td>';
+                '<td style="font-size:0.85em; color:#8b96a5">' + escapeHtml(d.endpoint) + '</td>' +
+                '<td><button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
+                    'onclick="openOnvifModal(\'' + escapeHtml(d.endpoint) + '\')">Подключить</button></td>';
             tbody.appendChild(tr);
         });
-
         resultsDiv.style.display = 'block';
         status.textContent = 'найдено: ' + _onvifDevices.length;
     } catch (e) {
@@ -1588,10 +1598,7 @@ async function onvifDiscover() {
 
 function openOnvifModalManual() {
     const ep = document.getElementById('onvif-manual-ep').value.trim();
-    if (!ep) {
-        showToast('Введите endpoint камеры', true);
-        return;
-    }
+    if (!ep) { showToast('Введите endpoint камеры', true); return; }
     let endpoint = ep;
     if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
         endpoint = 'http://' + endpoint;
@@ -1622,22 +1629,18 @@ function closeOnvifModal() {
 
 async function onvifProbe() {
     if (!_onvifCurrentDevice) return;
-
     const btn = document.getElementById('btn-onvif-probe');
     const status = document.getElementById('onvif-probe-status');
     const user = document.getElementById('onvif-user').value.trim();
     const pass = document.getElementById('onvif-pass').value;
-
     btn.disabled = true;
     status.textContent = 'подключаюсь...';
-
     try {
         const r = await api('POST', '/api/onvif/probe', {
             endpoint: _onvifCurrentDevice,
             username: user,
             password: pass,
         });
-
         const infoTable = document.getElementById('onvif-device-info');
         const info = r.device_info || {};
         infoTable.innerHTML = '';
@@ -1656,7 +1659,6 @@ async function onvifProbe() {
                 infoTable.appendChild(tr);
             }
         });
-
         const tbody = document.querySelector('#onvif-profiles tbody');
         tbody.innerHTML = '';
         (r.profiles || []).forEach(p => {
@@ -1668,19 +1670,14 @@ async function onvifProbe() {
                 '<td>' + escapeHtml(p.name || p.token) + '</td>' +
                 '<td style="font-size:0.85em; word-break:break-all">' +
                     (url ? escapeHtml(url) : '<span class="muted">—</span>') + '</td>' +
-                '<td>' +
-                    (url
-                        ? '<button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
-                          'onclick="addOnvifCamera(\'' + safeUrl + '\', \'' + safeName + '\')">' +
-                          '+ Добавить</button>'
-                        : '') +
-                '</td>';
+                '<td>' + (url
+                    ? '<button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
+                      'onclick="addOnvifCamera(\'' + safeUrl + '\', \'' + safeName + '\')">+ Добавить</button>'
+                    : '') + '</td>';
             tbody.appendChild(tr);
         });
-
         document.getElementById('onvif-probe-result').style.display = 'block';
         status.textContent = 'успешно, профилей: ' + (r.profiles || []).length;
-
     } catch (e) {
         status.textContent = 'ошибка: ' + e.message;
     } finally {
@@ -1692,19 +1689,14 @@ async function addOnvifCamera(rtspUrl, profileName) {
     const suggestedId = 'onvif_' + Math.random().toString(36).slice(2, 7);
     const id = prompt('ID камеры (латиница, цифры, _, -):', suggestedId);
     if (!id) return;
-
     const name = prompt('Название камеры:', 'ONVIF ' + profileName);
     if (!name) return;
-
     try {
         const r = await api('POST', '/api/onvif/add_camera', {
             id: id.trim(),
             name: name.trim(),
             rtsp_url: rtspUrl,
-            fps: 25,
-            width: 1280,
-            height: 720,
-            record: false,
+            fps: 25, width: 1280, height: 720, record: false,
         });
         showToast('Камера добавлена: ' + r.camera.id);
         closeOnvifModal();
@@ -1727,11 +1719,8 @@ function renderUserRow(u) {
             '<option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>viewer</option>' +
         '</select></td>' +
         '<td>' +
-            '<button class="btn secondary" type="button" ' +
-                'onclick="generateUserPassword(this)" ' +
-                'title="Сгенерировать случайный пароль">🎲</button> ' +
-            '<button class="btn danger" type="button" ' +
-                'onclick="this.closest(\'tr\').remove()">✕</button>' +
+            '<button class="btn secondary" type="button" onclick="generateUserPassword(this)" title="Сгенерировать пароль">🎲</button> ' +
+            '<button class="btn danger" type="button" onclick="this.closest(\'tr\').remove()">✕</button>' +
         '</td>';
     return tr;
 }

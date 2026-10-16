@@ -315,6 +315,8 @@ class EventsManager:
         self._sessions = {}
         self._sessions_lock = threading.Lock()
         self._dedup_cache = {}
+                # Камеры без ONVIF Events — не проверяем повторно
+        self._no_events_cams = set()
 
         self.started_at = 0.0
         self.events_saved = 0
@@ -412,6 +414,8 @@ class EventsManager:
             sess = self._sessions.get(cam_id)
             if sess:
                 return sess
+            if cam_id in self._no_events_cams:
+                return None
 
         try:
             client = OnvifEvents(
@@ -421,7 +425,10 @@ class EventsManager:
             )
 
             if not client.has_events():
-                logger.info("[%s] ONVIF Events не поддерживаются", cam_id)
+                logger.info("[%s] ONVIF Events не поддерживаются — "
+                            "больше не проверяю", cam_id)
+                with self._sessions_lock:
+                    self._no_events_cams.add(cam_id)
                 return None
 
             if not client.subscribe(

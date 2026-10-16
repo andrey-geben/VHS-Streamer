@@ -110,6 +110,7 @@ from recorder import Recorder
 from duplicator import StreamDuplicator
 import auth as auth_mod
 from settings_api import settings_bp
+from onvif_server import onvif_bp
 from streams_api import streams_bp
 from diagnostics import diagnostics_bp
 from mediamtx_manager import MediaMTXManager
@@ -293,6 +294,7 @@ app.config["EVENTS_MANAGER"] = events_manager
 app.config["LOOPBACK_URLS"] = loopback_urls
 
 app.register_blueprint(settings_bp)
+app.register_blueprint(onvif_bp)
 app.register_blueprint(streams_bp)
 app.register_blueprint(diagnostics_bp)
 
@@ -318,7 +320,13 @@ app.jinja_env.globals["APP_FOOTER"] = APP_FOOTER
 app.jinja_env.globals["APP_NAME"] = APP_NAME
 app.jinja_env.globals["APP_VERSION"] = __version__
 
-
+# ======================================================================
+#  Журнал событий
+# ======================================================================
+@app.route("/events")
+@auth_mod.login_required
+def events_page():
+    return render_template("events.html", user=g.user)
 # ======================================================================
 #  Аутентификация
 # ======================================================================
@@ -518,6 +526,48 @@ if __name__ == "__main__":
     if loopback_urls:
         logger.info("Loopback-камеры: %s", list(loopback_urls.keys()))
 
+    # ---- ONVIF-прокси ----
+    onvif_proxy_cfg = config.get("onvif_proxy", {}) or {}
+    onvif_thread = None
+    if onvif_proxy_cfg.get("enabled", False):
+        import threading as _threading
+        from flask import Flask as _Flask
+
+        onvif_port = int(onvif_proxy_cfg.get("port", 8081))
+        onvif_host = onvif_proxy_cfg.get("host", "0.0.0.0")
+
+        # Второй экземпляр Flask ТОЛЬКО для ONVIF
+        onvif_app = _Flask("onvif_proxy_app")
+        onvif_app.secret_key = app.secret_key
+        # Копируем общие данные, чтобы ONVIF-хендлеры их видели
+        onvif_app.config["CAMERAS"] = cameras
+        onvif_app.config["RECORDERS"] = recorders
+        onvif_app.config["VHS_CONFIG"] = config
+        onvif_app.config["CONFIG_PATH"] = str(CONFIG_PATH)
+        onvif_app.config["MEDIAMTX"] = mediamtx
+        onvif_app.config["MEDIAMTX_HELPERS"] = app.config["MEDIAMTX_HELPERS"]
+        onvif_app.config["LOOPBACK_URLS"] = loopback_urls
+        onvif_app.config["EVENTS_MANAGER"] = events_manager
+        onvif_app.register_blueprint(onvif_bp)
+
+        def _run_onvif():
+            logger.info("ONVIF-прокси на http://%s:%s", onvif_host, onvif_port)
+            onvif_app.run(
+                host=onvif_host,
+                port=onvif_port,
+                threaded=True,
+                debug=False,
+                use_reloader=False,
+            )
+
+        onvif_thread = _threading.Thread(
+            target=_run_onvif,
+            name="onvif-proxy",
+            daemon=True,
+        )
+        onvif_thread.start()
+    else:
+        logger.info("ONVIF-прокси выключен")
     # ---- Запуск и корректное завершение ----
     try:
         app.run(host=host, port=port, threaded=True, debug=False)

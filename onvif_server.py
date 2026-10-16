@@ -9,6 +9,9 @@ ONVIF-прокси на стороне VHS-Streamer.
 
 Все ответы — SOAP over HTTP. Namespace'ы соответствуют стандарту ONVIF.
 """
+import base64
+import hashlib
+import hmac
 import logging
 import re
 import threading
@@ -116,6 +119,157 @@ def _soap_fault(reason: str, code: str = "ter:ActionNotSupported") -> Response:
     )
     return _soap_response(body)
 
+# ======================================================================
+# WS-Security авторизация
+# ======================================================================
+def _unauthorized_response() -> Response:
+    """401 с SOAP-Fault (NotAuthorized)."""
+    body = (
+        '<s:Fault>'
+        '<s:Code><s:Value>s:Sender</s:Value>'
+        '<s:Subcode><s:Value>ter:NotAuthorized</s:Value></s:Subcode>'
+        '</s:Code>'
+        '<s:Reason><s:Text xml:lang="en">Sender not Authorized</s:Text></s:Reason>'
+        '</s:Fault>'
+    )
+    xml = _soap_envelope(body)
+    return Response(
+        xml,
+        status=401,
+        mimetype='application/soap+xml; charset=utf-8',
+    )
+
+
+def _extract_ws_credentials() -> dict | None:
+    """
+    Извлекает WS-UsernameToken из SOAP-заголовка.
+    Возвращает dict или None.
+    """
+    text = request.get_data(as_text=True) or ""
+
+    # Username
+    m_user = re.search(
+        r'<[^>]*Username[^>]*>([^<]+)</[^>]*Username>', text
+    )
+    if not m_user:
+        return None
+    username = m_user.group(1).strip()
+
+    # Password с типом
+    m_pass = re.search(
+        r'<[^>]*Password[^>]*Type="([^"]*)"[^>]*>([^<]+)</[^>]*Password>',
+        text,
+    )
+    if m_pass:
+        pass_type = m_pass.group(1)
+        pass_value = m_pass.group(2).strip()
+    else:
+        # Password без Type (по умолчанию — PasswordText)
+        m_pass2 = re.search(
+            r'<[^>]*Password[^>]*>([^<]+)</[^>]*Password>', text
+        )
+        if not m_pass2:
+            return None
+        pass_type = "PasswordText"
+        pass_value = m_pass2.group(1).strip()
+
+    # Nonce и Created — нужны для digest
+    m_nonce = re.search(
+        r'<[^>]*Nonce[^>]*>([^<]+)</[^>]*Nonce>', text
+    )
+    m_created = re.search(
+        r'<[^>]*Created[^>]*>([^<]+)</[^>]*Created>', text
+    )
+
+    return {
+        "username": username,
+        "password": pass_value,
+        "password_type": pass_type,
+        "nonce": m_nonce.group(1).strip() if m_nonce else None,
+        "created": m_created.group(1).strip() if m_created else None,
+    }
+
+
+def _get_allowed_users() -> list:
+    """
+    Возвращает объединённый список пользователей:
+        * security.users (главные)
+        * onvif_proxy.auth.users (дополнительные)
+    """
+    cfg = current_app.config.get("VHS_CONFIG", {}) or {}
+    users = []
+
+    # Основные пользователи
+    sec = cfg.get("security", {}) or {}
+    for u in sec.get("users", []):
+        if u.get("username"):
+            users.append({
+                "username": u["username"],
+                "password": u.get("password", ""),
+            })
+
+    # Дополнительные из onvif_proxy.auth
+    proxy = cfg.get("onvif_proxy", {}) or {}
+    auth = proxy.get("auth", {}) or {}
+    for u in auth.get("users", []):
+        if u.get("username"):
+            # Не дублируем, если такой логин уже есть
+            if not any(x["username"] == u["username"] for x in users):
+                users.append({
+                    "username": u["username"],
+                    "password": u.get("password", ""),
+                })
+
+    return users
+
+
+def _verify_credentials(creds: dict) -> bool:
+    """Проверяет WS-UsernameToken."""
+    if not creds:
+        return False
+
+    username = creds["username"]
+    password = creds["password"]
+    pass_type = creds.get("password_type", "")
+
+    allowed = _get_allowed_users()
+    for u in allowed:
+        if u["username"] != username:
+            continue
+
+        # PasswordText — сравнение в чистом виде
+        if "PasswordText" in pass_type:
+            return hmac.compare_digest(password, u["password"])
+
+        # PasswordDigest — base64(sha1(nonce + created + password))
+        if "PasswordDigest" in pass_type:
+            nonce_b64 = creds.get("nonce")
+            created = creds.get("created")
+            if not nonce_b64 or not created:
+                return False
+            try:
+                nonce_bytes = base64.b64decode(nonce_b64)
+            except Exception:
+                return False
+            digest_input = nonce_bytes + created.encode("utf-8") + u["password"].encode("utf-8")
+            expected = base64.b64encode(
+                hashlib.sha1(digest_input).digest()
+            ).decode("ascii")
+            if hmac.compare_digest(password, expected):
+                return True
+            return False
+
+        # Неизвестный тип
+        return False
+
+    return False
+
+
+def _is_auth_enabled() -> bool:
+    """Включена ли авторизация прокси."""
+    proxy = _get_proxy_cfg()
+    auth = proxy.get("auth", {}) or {}
+    return bool(auth.get("enabled", False))
 
 # ======================================================================
 # Общие данные о камерах и потоках
@@ -763,6 +917,10 @@ def _handle_operation(operation: str) -> Response:
     return handler()
 
 
+# Методы, доступные без авторизации (требование ONVIF-стандарта)
+PUBLIC_OPERATIONS = ("GetSystemDateAndTime", "GetWsdlUrl")
+
+
 def _dispatch():
     body_bytes = request.get_data()
     text = _parse_soap(body_bytes)[0] or ""
@@ -779,6 +937,24 @@ def _dispatch():
 
     if not operation:
         return _soap_fault("Не удалось определить операцию")
+
+    # Проверка авторизации
+    if _is_auth_enabled() and operation not in PUBLIC_OPERATIONS:
+        creds = _extract_ws_credentials()
+        if not creds:
+            logger.info("ONVIF proxy: %s — нет WS-Security заголовка",
+                        operation)
+            return _unauthorized_response()
+        if not _verify_credentials(creds):
+            logger.warning(
+                "ONVIF proxy: %s — неверные креды (user=%r, type=%r)",
+                operation,
+                creds.get("username"),
+                creds.get("password_type"),
+            )
+            return _unauthorized_response()
+        logger.debug("ONVIF proxy: %s — авторизован как %s",
+                     operation, creds.get("username"))
 
     return _handle_operation(operation)
 

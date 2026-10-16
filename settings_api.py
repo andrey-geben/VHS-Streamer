@@ -812,3 +812,283 @@ def api_onvif_add_camera():
     logger.info("ONVIF: добавлена камера %s (%s)", cam_id, rtsp_url)
 
     return jsonify({"ok": True, "camera": _camera_to_dict(cam)}), 201
+
+
+# ======================================================================
+# API: PTZ — управление поворотами/зумом
+# ======================================================================
+@settings_bp.route("/api/cameras/<camera_id>/ptz/info", methods=["GET"])
+@login_required
+def api_ptz_info(camera_id: str):
+    """
+    Проверяет поддержку PTZ и возвращает конфигурации + пресеты.
+    """
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+    if cam.type != "ip":
+        return jsonify({
+            "ok": True,
+            "has_ptz": False,
+            "error": "PTZ доступен только для IP-камер",
+        })
+
+    # Логин/пароль для ONVIF — из URL камеры, если они там есть
+    from onvif_client import get_ptz_info, parse_rtsp_auth
+    # Если функция parse_rtsp_auth не найдена — берём логин/пароль из source
+
+    # Извлекаем endpoint камеры из RTSP-URL
+    # RTSP-URL вида: rtsp://user:pass@host:port/path
+    # ONVIF endpoint: http://host/onvif/device_service
+    rtsp_url = cam.source
+    parsed = _parse_rtsp_for_onvif(rtsp_url)
+    if not parsed:
+        return jsonify({
+            "ok": False,
+            "has_ptz": False,
+            "error": "Не удалось разобрать RTSP-URL камеры",
+        }), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    logger.info("[%s] PTZ info: %s", camera_id, endpoint)
+
+    try:
+        result = get_ptz_info(
+            endpoint,
+            parsed.get("user", ""),
+            parsed.get("password", ""),
+        )
+    except Exception as e:
+        logger.exception("PTZ info error")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify(result)
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/move", methods=["POST"])
+@admin_required
+def api_ptz_move(camera_id: str):
+    """
+    Движение PTZ.
+    Тело: {"pan": 0.5, "tilt": 0.0, "zoom": 0.0, "duration": 0.5}
+    """
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+    if cam.type != "ip":
+        return jsonify({"error": "PTZ только для IP"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    pan = float(payload.get("pan", 0.0))
+    tilt = float(payload.get("tilt", 0.0))
+    zoom = float(payload.get("zoom", 0.0))
+    duration = float(payload.get("duration", 0.5))
+    profile_token = payload.get("profile_token")
+
+    if not profile_token:
+        return jsonify({"error": "Не указан profile_token"}), 400
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+
+    from onvif_client import ptz_move
+    ok = ptz_move(
+        endpoint,
+        parsed.get("user", ""),
+        parsed.get("password", ""),
+        profile_token,
+        pan=pan, tilt=tilt, zoom=zoom,
+        duration=duration,
+    )
+    return jsonify({"ok": ok})
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/stop", methods=["POST"])
+@admin_required
+def api_ptz_stop(camera_id: str):
+    """Остановить движение."""
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    profile_token = payload.get("profile_token")
+    if not profile_token:
+        return jsonify({"error": "Не указан profile_token"}), 400
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+
+    from onvif_client import ptz_stop
+    ok = ptz_stop(
+        endpoint,
+        parsed.get("user", ""),
+        parsed.get("password", ""),
+        profile_token,
+    )
+    return jsonify({"ok": ok})
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/home", methods=["POST"])
+@admin_required
+def api_ptz_home(camera_id: str):
+    """Вернуть в исходное положение."""
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    profile_token = payload.get("profile_token")
+    if not profile_token:
+        return jsonify({"error": "Не указан profile_token"}), 400
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+
+    from onvif_client import ptz_home
+    ok = ptz_home(
+        endpoint,
+        parsed.get("user", ""),
+        parsed.get("password", ""),
+        profile_token,
+    )
+    return jsonify({"ok": ok})
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/preset/goto", methods=["POST"])
+@admin_required
+def api_ptz_preset_goto(camera_id: str):
+    """Перейти к пресету."""
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    profile_token = payload.get("profile_token")
+    preset_token = payload.get("preset_token")
+    if not profile_token or not preset_token:
+        return jsonify({"error": "Нужны profile_token и preset_token"}), 400
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+
+    from onvif_client import ptz_goto_preset
+    ok = ptz_goto_preset(
+        endpoint,
+        parsed.get("user", ""),
+        parsed.get("password", ""),
+        profile_token,
+        preset_token,
+    )
+    return jsonify({"ok": ok})
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/preset/set", methods=["POST"])
+@admin_required
+def api_ptz_preset_set(camera_id: str):
+    """Создать пресет из текущего положения."""
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    profile_token = payload.get("profile_token")
+    name = (payload.get("name") or "").strip()
+    if not profile_token or not name:
+        return jsonify({"error": "Нужны profile_token и name"}), 400
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+
+    from onvif_client import ptz_set_preset
+    result = ptz_set_preset(
+        endpoint,
+        parsed.get("user", ""),
+        parsed.get("password", ""),
+        profile_token,
+        name,
+    )
+    return jsonify({"ok": result is not None, "preset": result})
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/preset/remove", methods=["POST"])
+@admin_required
+def api_ptz_preset_remove(camera_id: str):
+    """Удалить пресет."""
+    st = _state()
+    cam = st["cameras"].get(camera_id)
+    if not cam:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    profile_token = payload.get("profile_token")
+    preset_token = payload.get("preset_token")
+    if not profile_token or not preset_token:
+        return jsonify({"error": "Нужны profile_token и preset_token"}), 400
+
+    parsed = _parse_rtsp_for_onvif(cam.source)
+    if not parsed:
+        return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
+
+    endpoint = f"http://{parsed['host']}/onvif/device_service"
+
+    from onvif_client import ptz_remove_preset
+    ok = ptz_remove_preset(
+        endpoint,
+        parsed.get("user", ""),
+        parsed.get("password", ""),
+        profile_token,
+        preset_token,
+    )
+    return jsonify({"ok": ok})
+
+
+# ======================================================================
+# Вспомогательное: разбор RTSP-URL для ONVIF
+# ======================================================================
+def _parse_rtsp_for_onvif(rtsp_url: str):
+    """
+    Разбирает RTSP-URL вида rtsp://user:pass@host:port/path
+    и возвращает {host, port, user, password} или None.
+    """
+    if not rtsp_url:
+        return None
+    m = re.match(
+        r"^rtsp://"
+        r"(?:(?P<user>[^:@/]+)(?::(?P<pass>[^@/]*))?@)?"
+        r"(?P<host>[^:/]+)"
+        r"(?::(?P<port>\d+))?"
+        r"(?P<path>/.*)?$",
+        rtsp_url.strip(),
+        re.IGNORECASE,
+    )
+    if not m:
+        return None
+    return {
+        "user": m.group("user") or "",
+        "password": m.group("pass") or "",
+        "host": m.group("host") or "",
+        "port": int(m.group("port")) if m.group("port") else 554,
+        "path": m.group("path") or "",
+    }

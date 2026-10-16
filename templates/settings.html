@@ -226,105 +226,224 @@
 {% endif %}
 
 <!-- ============= МОДАЛКА КАМЕРЫ ============= -->
-<div id="camera-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100;">
-    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:600px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
-        <h3 style="margin-top:0" id="modal-title">Камера</h3>
-        <div class="form-row"><label>ID (латиница)</label><input type="text" id="m-id"></div>
-        <div class="form-row"><label>Название</label><input type="text" id="m-name"></div>
-        <div class="form-row"><label>Тип</label>
-            <select id="m-type">
-                <option value="ip">IP (RTSP/HTTP)</option>
-                <option value="analog">Аналоговая (USB/карта)</option>
-            </select></div>
+<style>
+    #camera-modal .cam-modal-body .form-row {
+        display: grid !important;
+        grid-template-columns: 170px 1fr;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    #camera-modal .cam-modal-body .form-row > label {
+        min-width: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        text-align: right;
+        font-size: 0.92em;
+        color: #8b96a5;
+    }
+    #camera-modal .cam-modal-body .form-row > input,
+    #camera-modal .cam-modal-body .form-row > select {
+        width: 100%;
+        box-sizing: border-box;
+    }
+    #camera-modal .cam-modal-body .form-row > .muted {
+        grid-column: 2;
+        font-size: 0.8em;
+        color: #8b96a5;
+        margin-top: -4px;
+    }
+    #camera-modal .cam-modal-body .form-row.checkbox-row {
+        align-items: center;
+    }
+    #camera-modal .cam-modal-body .form-row.checkbox-row > input[type=checkbox] {
+        justify-self: start;
+        width: auto;
+    }
 
-        <div id="m-ip-autofill" style="display:none;
-                                       background:#14161a;
-                                       border:1px solid #2a2f37;
-                                       border-radius:6px;
-                                       padding:12px;
-                                       margin-bottom:8px">
-            <div style="font-size:0.9em; color:#8b96a5; margin-bottom:8px">
-                Быстрое заполнение RTSP (Hikvision, Dahua, Reolink, Axis)
-            </div>
+    #camera-modal .autofill-box {
+        background: #14161a;
+        border: 1px solid #2a2f37;
+        border-radius: 6px;
+        padding: 14px 18px;
+        margin-bottom: 14px;
+        overflow-x: hidden;
+    }
+    #camera-modal .autofill-box .title {
+        font-size: 0.9em;
+        color: #8b96a5;
+        margin-bottom: 12px;
+    }
+    #camera-modal .autofill-box .row {
+        display: grid;
+        grid-template-columns: 120px 1fr 90px 1fr;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+    #camera-modal .autofill-box .row.full {
+        grid-template-columns: 120px 1fr;
+    }
+    #camera-modal .autofill-box .row.stream {
+        grid-template-columns: 120px 1fr auto;
+    }
+    #camera-modal .autofill-box .row label {
+        min-width: 0;
+        text-align: right;
+        font-size: 0.88em;
+        color: #8b96a5;
+        margin: 0;
+    }
+    #camera-modal .autofill-box input,
+    #camera-modal .autofill-box select {
+        width: 100%;
+        box-sizing: border-box;
+    }
+</style>
 
-            <div class="form-row">
-                <label>Вендор</label>
-                <select id="m-vendor" style="flex:1" onchange="onVendorChange()">
-                    <option value="">— выберите вендора —</option>
-                </select>
-            </div>
-            <div class="form-row">
-                <label>IP-адрес</label>
-                <input type="text" id="m-ip" placeholder="192.168.1.100" style="flex:1">
-                <label style="margin-left:8px">Порт</label>
-                <input type="number" id="m-port" value="554" min="1" max="65535"
-                       style="width:80px; margin-left:8px">
-            </div>
-            <div class="form-row">
-                <label>Логин</label>
-                <input type="text" id="m-ip-user" placeholder="admin" style="flex:1">
-                <label style="margin-left:8px">Пароль</label>
-                <input type="password" id="m-ip-pass" style="flex:1; margin-left:8px">
-            </div>
-            <div class="form-row">
-                <label>Поток</label>
-                <select id="m-vendor-stream" style="flex:1">
-                    <option value="">— сначала выберите вендора —</option>
-                </select>
-                <button class="btn" type="button" style="margin-left:8px"
-                        onclick="autofillRtsp()">Сгенерировать URL</button>
-            </div>
+<div id="camera-modal" style="display:none;
+                              position:fixed; inset:0;
+                              background:rgba(0,0,0,.6); z-index:100;
+                              align-items:center; justify-content:center;">
+    <div style="background:#1e2126;
+                border-radius:10px;
+                border:1px solid #2a2f37;
+                width:800px; max-width:95vw;
+                height:85vh; max-height:850px;
+                display:flex; flex-direction:column;
+                overflow:hidden;">
+
+        <!-- Заголовок -->
+        <div style="padding:20px 28px 12px;
+                    border-bottom:1px solid #2a2f37;
+                    flex-shrink:0;">
+            <h3 style="margin:0" id="modal-title">Камера</h3>
         </div>
 
-        <div class="form-row"><label>Источник</label>
-            <input type="text" id="m-source" placeholder="rtsp://... или имя dshow"></div>
-        <div class="form-row">
-            <label>Индекс захвата</label>
-            <input type="number" id="m-capture-index" placeholder="0" min="0">
-            <span class="muted" style="margin-left:8px">для аналоговой</span>
-        </div>
-        <div class="form-row"><label>Транспорт (для IP)</label>
-            <select id="m-transport">
-                <option value="">— по умолчанию —</option>
-                <option value="tcp">tcp</option>
-                <option value="udp">udp</option>
-            </select></div>
-        <div class="form-row"><label>FPS</label><input type="number" id="m-fps" value="25" min="1" max="60"></div>
-        <div class="form-row"><label>Ширина</label><input type="number" id="m-width" value="640"></div>
-        <div class="form-row"><label>Высота</label><input type="number" id="m-height" value="480"></div>
+        <!-- Скроллируемое содержимое -->
+        <div class="cam-modal-body" style="padding:18px 28px; flex:1; overflow-y:auto; overflow-x:hidden;">
 
-        <div class="form-row" id="row-audio-enable" style="display:none">
-            <label>Захватывать звук</label>
-            <input type="checkbox" id="m-audio">
-            <button class="btn secondary" type="button"
-                    style="margin-left:10px; padding:4px 10px; font-size:0.85em"
-                    onclick="probeAudio()"
-                    id="btn-probe-audio">Проверить звук</button>
-            <span class="muted" id="probe-audio-status"
-                  style="margin-left:8px; font-size:0.85em"></span>
+            <div class="form-row"><label>ID (латиница)</label>
+                <input type="text" id="m-id" placeholder="cam_1"></div>
+
+            <div class="form-row"><label>Название</label>
+                <input type="text" id="m-name" placeholder="Входная дверь"></div>
+
+            <div class="form-row"><label>Тип</label>
+                <select id="m-type">
+                    <option value="ip">IP (RTSP/HTTP)</option>
+                    <option value="analog">Аналоговая (USB/карта)</option>
+                </select></div>
+
+            <!-- Блок автозаполнения RTSP -->
+            <div id="m-ip-autofill" class="autofill-box" style="display:none">
+                <div class="title">
+                    Быстрое заполнение RTSP (Hikvision, Dahua, Reolink, Axis)
+                </div>
+
+                <div class="row full">
+                    <label>Вендор</label>
+                    <select id="m-vendor" onchange="onVendorChange()">
+                        <option value="">— выберите вендора —</option>
+                    </select>
+                </div>
+
+                <div class="row">
+                    <label>IP-адрес</label>
+                    <input type="text" id="m-ip" placeholder="192.168.1.100">
+                    <label>Порт</label>
+                    <input type="number" id="m-port" value="554" min="1" max="65535">
+                </div>
+
+                <div class="row">
+                    <label>Логин</label>
+                    <input type="text" id="m-ip-user" placeholder="admin">
+                    <label>Пароль</label>
+                    <input type="password" id="m-ip-pass">
+                </div>
+
+                <div class="row stream">
+                    <label>Поток</label>
+                    <select id="m-vendor-stream">
+                        <option value="">— сначала выберите вендора —</option>
+                    </select>
+                    <button class="btn" type="button" onclick="autofillRtsp()">
+                        Сгенерировать URL
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-row"><label>Источник</label>
+                <input type="text" id="m-source"
+                       placeholder="rtsp://... или имя dshow"></div>
+
+            <div class="form-row"><label>Индекс захвата</label>
+                <input type="number" id="m-capture-index" placeholder="0" min="0">
+                <span class="muted">для аналоговой камеры</span></div>
+
+            <div class="form-row"><label>Транспорт (IP)</label>
+                <select id="m-transport">
+                    <option value="">— по умолчанию —</option>
+                    <option value="tcp">tcp</option>
+                    <option value="udp">udp</option>
+                </select></div>
+
+            <div class="form-row"><label>FPS</label>
+                <input type="number" id="m-fps" value="25" min="1" max="60"></div>
+
+            <div class="form-row"><label>Ширина</label>
+                <input type="number" id="m-width" value="640"></div>
+
+            <div class="form-row"><label>Высота</label>
+                <input type="number" id="m-height" value="480"></div>
+
+            <!-- Аудио -->
+            <div class="form-row checkbox-row" id="row-audio-enable"
+                 style="display:none;
+                        grid-template-columns: 170px auto 1fr auto;">
+                <label>Захватывать звук</label>
+                <input type="checkbox" id="m-audio">
+                <button class="btn secondary" type="button"
+                        style="padding:4px 12px; font-size:0.85em; white-space:nowrap; justify-self:start"
+                        onclick="probeAudio()"
+                        id="btn-probe-audio">Проверить звук</button>
+                <span class="muted" id="probe-audio-status"
+                      style="font-size:0.85em; white-space:nowrap"></span>
+            </div>
+
+            <!-- Архив -->
+            <div class="form-row checkbox-row">
+                <label>Писать в архив</label>
+                <input type="checkbox" id="m-record" onchange="onRecordToggle()">
+                <span class="muted" style="grid-column:2; font-size:0.8em">
+                    по умолчанию выключено
+                </span>
+            </div>
+
+            <div class="form-row" id="row-archive-path" style="display:none">
+                <label>Путь архива</label>
+                <input type="text" id="m-archive-path"
+                       placeholder="Пусто — использовать общий путь">
+            </div>
+            <p class="hint" id="archive-path-hint"
+               style="display:none;
+                      margin-left:182px;
+                      font-size:0.82em;
+                      color:#8b96a5;
+                      line-height:1.5;
+                      margin-top:-4px;">
+                Укажите свою папку для этой камеры, если нужно писать в отдельное
+                место (например, на NAS или внешний диск). Если оставить пустым —
+                используется глобальный путь из раздела «Архив».
+            </p>
+
         </div>
 
-        <div class="form-row">
-            <label>Писать в архив</label>
-            <input type="checkbox" id="m-record" onchange="onRecordToggle()">
-            <span class="muted" style="margin-left:10px; font-size:0.85em">
-                по умолчанию выключено
-            </span>
-        </div>
-
-        <div class="form-row" id="row-archive-path" style="display:none">
-            <label>Путь архива</label>
-            <input type="text" id="m-archive-path"
-                   placeholder="Оставьте пустым — использовать общий путь"
-                   style="flex:1">
-        </div>
-        <p class="hint" id="archive-path-hint" style="display:none">
-            Укажите свою папку для этой камеры, если нужно писать в отдельное
-            место (например, на NAS или внешний диск). Если оставить пустым —
-            используется глобальный путь из раздела «Архив».
-        </p>
-
-        <div style="text-align:right; margin-top:16px">
+        <!-- Кнопки -->
+        <div style="padding:14px 28px 20px;
+                    border-top:1px solid #2a2f37;
+                    text-align:right;
+                    flex-shrink:0;">
             <button class="btn secondary" onclick="closeCameraModal()">Отмена</button>
             <button class="btn" onclick="saveCamera()">Сохранить</button>
         </div>
@@ -511,7 +630,7 @@ function detectVendorClient(url) {
 function updateAudioRowVisibility() {
     const type = document.getElementById('m-type').value;
     const row = document.getElementById('row-audio-enable');
-    row.style.display = (type === 'ip') ? 'flex' : 'none';
+    row.style.display = (type === 'ip') ? 'grid' : 'none';
     updateIpAutofillVisibility();
 }
 
@@ -594,7 +713,7 @@ async function autofillRtsp() {
 // =====================================================================
 function onRecordToggle() {
     const on = document.getElementById('m-record').checked;
-    document.getElementById('row-archive-path').style.display = on ? 'flex' : 'none';
+    document.getElementById('row-archive-path').style.display = on ? 'grid' : 'none';
     document.getElementById('archive-path-hint').style.display = on ? 'block' : 'none';
 }
 
@@ -651,7 +770,7 @@ function openCameraModal(cameraId) {
     }
     updateAudioRowVisibility();
     onRecordToggle();
-    document.getElementById('camera-modal').style.display = 'block';
+    document.getElementById('camera-modal').style.display = 'flex';
 }
 
 function closeCameraModal() {

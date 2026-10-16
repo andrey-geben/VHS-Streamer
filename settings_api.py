@@ -684,3 +684,131 @@ def api_camera_autofill():
         return jsonify({"error": "Не удалось сгенерировать URL"}), 400
 
     return jsonify({"url": url})
+
+
+
+# ======================================================================
+# API: ONVIF — обнаружение камер
+# ======================================================================
+@settings_bp.route("/api/onvif/discover", methods=["POST"])
+@admin_required
+def api_onvif_discover():
+    """
+    Запускает WS-Discovery сканирование локальной сети.
+    Возвращает список найденных ONVIF-устройств.
+    """
+    payload = request.get_json(silent=True) or {}
+    timeout = float(payload.get("timeout", 4.0))
+    timeout = max(1.0, min(timeout, 15.0))
+
+    try:
+        from onvif_client import discover_devices
+        devices = discover_devices(timeout=timeout)
+    except Exception as e:
+        logger.exception("Ошибка ONVIF discovery")
+        return jsonify({"error": f"Ошибка сканирования: {e}"}), 500
+
+    return jsonify({
+        "ok": True,
+        "count": len(devices),
+        "devices": devices,
+    })
+
+
+@settings_bp.route("/api/onvif/probe", methods=["POST"])
+@admin_required
+def api_onvif_probe():
+    """
+    Подключается к ONVIF-камере и получает список профилей с RTSP-адресами.
+    """
+    payload = request.get_json(silent=True) or {}
+    endpoint = (payload.get("endpoint") or "").strip()
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+
+    if not endpoint:
+        return jsonify({"error": "Не указан endpoint"}), 400
+
+    try:
+        from onvif_client import get_rtsp_urls
+        result = get_rtsp_urls(endpoint, username, password)
+    except Exception as e:
+        logger.exception("Ошибка ONVIF probe")
+        return jsonify({"error": f"Ошибка подключения: {e}"}), 500
+
+    if not result.get("ok"):
+        return jsonify({"error": result.get("error") or "Не удалось получить профили"}), 400
+
+    return jsonify(result)
+
+
+@settings_bp.route("/api/onvif/add_camera", methods=["POST"])
+@admin_required
+def api_onvif_add_camera():
+    """
+    Создаёт камеру на основе данных ONVIF.
+    """
+    st = _state()
+    payload = request.get_json(silent=True) or {}
+
+    cam_id = (payload.get("id") or "").strip()
+    name = (payload.get("name") or "").strip()
+    rtsp_url = (payload.get("rtsp_url") or "").strip()
+
+    if not cam_id or not name or not rtsp_url:
+        return jsonify({"error": "Поля id, name и rtsp_url обязательны"}), 400
+
+    if cam_id in st["cameras"]:
+        return jsonify({"error": f"Камера '{cam_id}' уже существует"}), 409
+
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", cam_id):
+        return jsonify({"error": "id может содержать только буквы, цифры, '_' и '-'"}), 400
+
+    new_cfg = {
+        "id": cam_id,
+        "name": name,
+        "type": "ip",
+        "source": rtsp_url,
+        "capture_index": None,
+        "fps": int(payload.get("fps", 25)),
+        "width": int(payload.get("width", 1280)),
+        "height": int(payload.get("height", 720)),
+        "record": bool(payload.get("record", False)),
+        "archive_path": "",
+        "transport": "tcp",
+        "open_timeout_ms": 5000,
+        "read_timeout_ms": 5000,
+        "has_audio": None,
+        "audio": False,
+    }
+
+    loopback_urls = current_app.config.get("LOOPBACK_URLS", {})
+    if cam_id in loopback_urls:
+        new_cfg["preview_source"] = loopback_urls[cam_id]
+
+    try:
+        cam = Camera(new_cfg)
+        cam.start()
+    except Exception as e:
+        logger.exception("Ошибка создания ONVIF-камеры")
+        return jsonify({"error": f"Не удалось создать камеру: {e}"}), 500
+
+    st["cameras"][cam_id] = cam
+
+    archive_cfg = st["config"].get("archive", {})
+    if (new_cfg.get("record", False)
+            and archive_cfg.get("enabled", False)
+            and archive_cfg.get("record_all", True)):
+        try:
+            rec = Recorder(cam, archive_cfg, new_cfg)
+            rec.start()
+            st["recorders"][cam_id] = rec
+        except Exception:
+            logger.exception("Ошибка создания рекордера")
+
+    st["config"].setdefault("cameras", []).append(new_cfg)
+    _save_config(st["config"], st["config_path"])
+
+    logger.info("ONVIF: добавлена камера %s (%s)", cam_id, rtsp_url)
+
+    return jsonify({"ok": True, "camera": _camera_to_dict(cam)}), 201

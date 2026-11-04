@@ -1,10 +1,386 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>$Title$</title>
-</head>
-<body>
-$END$
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}События — VHS-Streamer{% endblock %}
+{% block content %}
+
+<h2 style="margin-top:0; display:flex; justify-content:space-between; align-items:center">
+    <span>Журнал событий</span>
+    <button class="btn secondary" id="btn-refresh"
+            onclick="loadEvents()">🔄 Обновить</button>
+</h2>
+
+<!-- ============= СТАТИСТИКА ============= -->
+<div class="card" style="padding:12px 16px">
+    <div style="display:flex; flex-wrap:wrap; gap:24px; align-items:center; font-size:0.9em">
+        <div>Всего записей: <b id="st-total">—</b></div>
+        <div>За последний час: <b id="st-hour">—</b></div>
+        <div>Тревог (<span class="severity-alert">alert</span>): <b id="st-alert">—</b></div>
+        <div>Предупреждений (<span class="severity-warning">warning</span>): <b id="st-warning">—</b></div>
+        <div class="muted" id="st-db">—</div>
+    </div>
+</div>
+
+<!-- ============= ФИЛЬТРЫ ============= -->
+<div class="card">
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end">
+        <div>
+            <label style="display:block; color:#8b96a5; font-size:0.85em; margin-bottom:4px">
+                Камера
+            </label>
+            <select id="f-camera" style="min-width:180px" onchange="loadEvents()">
+                <option value="">Все камеры</option>
+            </select>
+        </div>
+        <div>
+            <label style="display:block; color:#8b96a5; font-size:0.85em; margin-bottom:4px">
+                Severity
+            </label>
+            <select id="f-severity" style="min-width:140px" onchange="loadEvents()">
+                <option value="">Все</option>
+                <option value="alert">alert</option>
+                <option value="warning">warning</option>
+                <option value="info">info</option>
+            </select>
+        </div>
+        <div>
+            <label style="display:block; color:#8b96a5; font-size:0.85em; margin-bottom:4px">
+                Период
+            </label>
+            <select id="f-period" style="min-width:160px" onchange="loadEvents()">
+                <option value="3600">Последний час</option>
+                <option value="86400" selected>Сутки</option>
+                <option value="604800">Неделя</option>
+                <option value="2592000">Месяц</option>
+                <option value="0">Всё время</option>
+            </select>
+        </div>
+        <div>
+            <label style="display:block; color:#8b96a5; font-size:0.85em; margin-bottom:4px">
+                Лимит
+            </label>
+            <select id="f-limit" style="min-width:100px" onchange="loadEvents()">
+                <option value="100">100</option>
+                <option value="200" selected>200</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+            </select>
+        </div>
+        <div style="margin-left:auto; display:flex; gap:8px">
+            <label style="display:flex; align-items:center; gap:6px;
+                          color:#8b96a5; font-size:0.85em; cursor:pointer">
+                <input type="checkbox" id="f-auto" checked
+                       onchange="toggleAuto()">
+                Авто (5 сек)
+            </label>
+            <button class="btn danger" id="btn-clear"
+                    onclick="clearEvents()" style="display:none">
+                Очистить журнал
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============= ТАБЛИЦА ============= -->
+<div class="card">
+    <table id="events-table">
+        <thead>
+            <tr>
+                <th style="width:170px">Время</th>
+                <th style="width:150px">Камера</th>
+                <th style="width:180px">Событие</th>
+                <th style="width:100px">Severity</th>
+                <th style="width:100px">Состояние</th>
+                <th>Детали</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td colspan="6" class="muted" style="text-align:center; padding:20px">
+                Загрузка...
+            </td></tr>
+        </tbody>
+    </table>
+    <p class="muted" id="events-summary" style="margin-top:12px"></p>
+</div>
+
+<style>
+    .severity-alert   { color: #f16a6a; font-weight: 600; }
+    .severity-warning { color: #f5b944; font-weight: 600; }
+    .severity-info    { color: #57d87a; }
+
+    #events-table tbody tr:hover { background: #262b33; }
+
+    .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.8em;
+        font-weight: 600;
+    }
+    .badge-alert   { background: #5a1e1e; color: #ffaaaa; }
+    .badge-warning { background: #5a4a1e; color: #ffdd88; }
+    .badge-info    { background: #1e4a2a; color: #aaffaa; }
+
+    .state-on  { color: #57d87a; }
+    .state-off { color: #8b96a5; }
+
+    .details-cell {
+        font-family: Consolas, monospace;
+        font-size: 0.85em;
+        color: #8b96a5;
+        max-width: 400px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+</style>
+
+<script>
+    // =====================================================================
+// Состояние
+// =====================================================================
+let autoTimer = null;
+let camerasLoaded = false;
+
+// =====================================================================
+// Утилиты
+// =====================================================================
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+function fmtTime(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts * 1000);
+    return d.toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+}
+
+function severityClass(sev) {
+    if (sev === 'alert') return 'severity-alert';
+    if (sev === 'warning') return 'severity-warning';
+    return 'severity-info';
+}
+
+function severityBadge(sev) {
+    const cls = 'badge badge-' + (sev || 'info');
+    return '<span class="' + cls + '">' + escapeHtml(sev || 'info') + '</span>';
+}
+
+// =====================================================================
+// Загрузка списка камер в фильтр
+// =====================================================================
+async function loadCameraFilter() {
+    if (camerasLoaded) return;
+    try {
+        const r = await fetch('/api/cameras');
+        if (!r.ok) return;
+        const cams = await r.json();
+        const sel = document.getElementById('f-camera');
+        cams.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name + ' (' + c.id + ')';
+            sel.appendChild(opt);
+        });
+        camerasLoaded = true;
+    } catch (e) {
+        console.error('loadCameraFilter failed:', e);
+    }
+}
+
+// =====================================================================
+// Загрузка событий
+// =====================================================================
+async function loadEvents() {
+    const cameraId = document.getElementById('f-camera').value;
+    const severity = document.getElementById('f-severity').value;
+    const period = parseInt(document.getElementById('f-period').value);
+    const limit = parseInt(document.getElementById('f-limit').value);
+
+    const params = new URLSearchParams();
+    if (cameraId) params.append('camera_id', cameraId);
+    if (severity) params.append('severity', severity);
+    if (period > 0) {
+        params.append('since_ts', (Date.now() / 1000 - period).toFixed(0));
+    }
+    params.append('limit', String(limit));
+
+    const tbody = document.querySelector('#events-table tbody');
+    tbody.innerHTML = '<tr><td colspan="6" class="muted" ' +
+        'style="text-align:center; padding:20px">Загрузка...</td></tr>';
+
+    try {
+        const r = await fetch('/api/events?' + params.toString());
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+
+        renderEvents(data.events || []);
+        document.getElementById('events-summary').textContent =
+            'Показано: ' + (data.events || []).length;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="6" style="color:#f16a6a; ' +
+            'text-align:center; padding:20px">Ошибка: ' +
+            escapeHtml(e.message) + '</td></tr>';
+    }
+}
+
+function renderEvents(events) {
+    const tbody = document.querySelector('#events-table tbody');
+    tbody.innerHTML = '';
+
+    if (!events.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="muted" ' +
+            'style="text-align:center; padding:20px">Событий нет</td></tr>';
+        return;
+    }
+
+    events.forEach(ev => {
+        const tr = document.createElement('tr');
+
+        const stateText = ev.is_active
+            ? '<span class="state-on">● активно</span>'
+            : '<span class="state-off">○ закончилось</span>';
+
+        let details = '';
+        if (ev.data && Object.keys(ev.data).length) {
+            details = JSON.stringify(ev.data);
+        }
+        if (ev.source && Object.keys(ev.source).length) {
+            details += (details ? ' ' : '') + JSON.stringify(ev.source);
+        }
+
+        tr.innerHTML =
+            '<td>' + escapeHtml(fmtTime(ev.ts)) + '</td>' +
+            '<td>' + escapeHtml(ev.camera_id) + '</td>' +
+            '<td>' + escapeHtml(ev.topic_short || ev.topic) + '</td>' +
+            '<td>' + severityBadge(ev.severity) + '</td>' +
+            '<td>' + stateText + '</td>' +
+            '<td class="details-cell" title="' +
+                escapeHtml(details) + '">' +
+                escapeHtml(details || '—') + '</td>';
+        tbody.appendChild(tr);
+    });
+}
+
+// =====================================================================
+// Статистика
+// =====================================================================
+async function loadStats() {
+    try {
+        const r = await fetch('/api/events/stats');
+        if (!r.ok) return;
+        const data = await r.json();
+        const st = data.stats || {};
+
+        document.getElementById('st-total').textContent = st.total || 0;
+
+        const sev = st.by_severity || {};
+        document.getElementById('st-alert').textContent = sev.alert || 0;
+        document.getElementById('st-warning').textContent = sev.warning || 0;
+
+        if (st.oldest_ts) {
+            document.getElementById('st-db').textContent =
+                'с ' + fmtTime(st.oldest_ts) + ' по ' + fmtTime(st.newest_ts);
+        } else {
+            document.getElementById('st-db').textContent = 'журнал пуст';
+        }
+    } catch (e) {
+        console.error('loadStats failed:', e);
+    }
+}
+
+async function loadHourCount() {
+    try {
+        const r = await fetch('/api/events?since_ts=' +
+            (Date.now() / 1000 - 3600).toFixed(0) + '&limit=1000');
+        if (!r.ok) return;
+        const data = await r.json();
+        document.getElementById('st-hour').textContent =
+            (data.events || []).length;
+    } catch (e) {}
+}
+
+// =====================================================================
+// Автообновление
+// =====================================================================
+function toggleAuto() {
+    const on = document.getElementById('f-auto').checked;
+    if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+    }
+    if (on) {
+        autoTimer = setInterval(() => {
+            loadEvents();
+            loadStats();
+            loadHourCount();
+        }, 5000);
+    }
+}
+
+// =====================================================================
+// Очистка журнала
+// =====================================================================
+async function clearEvents() {
+    const period = document.getElementById('f-period').value;
+    const periodText = {
+        '3600': 'за последний час',
+        '86400': 'за последние сутки',
+        '604800': 'за последнюю неделю',
+        '2592000': 'за последний месяц',
+        '0': 'полностью'
+    }[period] || 'выбранные';
+
+    if (!confirm('Очистить журнал событий ' + periodText + '?')) return;
+
+    try {
+        // Используем cleanup с max_age_days = период в днях
+        // или малый период для «за час»
+        let max_age_days;
+        if (period === '0') {
+            max_age_days = 0;  // только что удалит всё старше сейчас — не сработает
+        } else {
+            max_age_days = Math.ceil(parseInt(period) / 86400);
+        }
+
+        const r = await fetch('/api/events/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ max_age_days: max_age_days, max_records: 0 }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+
+        alert('Удалено записей: ' + (data.result.removed_age || 0));
+        loadEvents();
+        loadStats();
+        loadHourCount();
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+// =====================================================================
+// Инициализация
+// =====================================================================
+(async function init() {
+    // Проверяем, что пользователь — admin (для показа кнопки очистки)
+    try {
+        const r = await fetch('/api/security/config');
+        if (r.ok) {
+            document.getElementById('btn-clear').style.display = 'inline-block';
+        }
+    } catch (e) {}
+
+    await loadCameraFilter();
+    await loadEvents();
+    await loadStats();
+    await loadHourCount();
+    toggleAuto();
+})();
+</script>
+
+{% endblock %}

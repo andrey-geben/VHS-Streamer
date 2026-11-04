@@ -35,18 +35,23 @@ def _quote(s: str) -> str:
     return s
 
 
-def build_ip_passthrough_no_audio_cmd(camera) -> str:
+def build_ip_passthrough_no_audio_cmd(camera, path_name: str) -> str:
     """
     FFmpeg-команда для IP-камеры с выключенным аудио.
     Видео копируется без перекодирования (-c:v copy),
     аудио отключается (-an). Нагрузка на CPU — почти нулевая.
+
+    path_name — имя пути MediaMTX (например "__raw_cam1").
+    Подставляется в URL явно: на Windows cmd.exe не разворачивает
+    $MTX_PATH, и FFmpeg публиковал бы в буквальный "$MTX_PATH",
+    получая 404 от MediaMTX.
     """
     input_args = f"-rtsp_transport tcp -i {_quote(camera.source)}"
     rtsp_out = (
         f"-f rtsp -rtsp_transport tcp "
         f"-pkt_size 800 "
         f"-muxdelay 0 -muxpreload 0 "
-        f"rtsp://localhost:{RTSP_PORT}/$MTX_PATH"
+        f"rtsp://localhost:{RTSP_PORT}/{path_name}"
     )
     return (
         f'"{FFMPEG_PATH}" -nostdin -loglevel warning '
@@ -56,8 +61,13 @@ def build_ip_passthrough_no_audio_cmd(camera) -> str:
     )
 
 
-def build_raw_publisher_cmd(camera) -> str:
-    """FFmpeg-команда для чтения физической камеры и публикации в raw-путь."""
+def build_raw_publisher_cmd(camera, path_name: str) -> str:
+    """
+    FFmpeg-команда для чтения физической камеры и публикации в raw-путь.
+
+    path_name — имя пути MediaMTX (например "__raw_analog_1").
+    Подставляется в URL явно (Windows cmd.exe не разворачивает $MTX_PATH).
+    """
     # --- Вход ---
     if camera.type == "analog":
         if IS_LINUX:
@@ -125,7 +135,7 @@ def build_raw_publisher_cmd(camera) -> str:
         f"-pkt_size 800 "
         f"-muxdelay 0 -muxpreload 0 "
         f"-bsf:v h264_mp4toannexb "
-        f"rtsp://localhost:{RTSP_PORT}/$MTX_PATH"
+        f"rtsp://localhost:{RTSP_PORT}/{path_name}"
     )
 
     return (
@@ -140,6 +150,10 @@ def build_transcode_cmd(stream_cfg: dict) -> str:
     """
     FFmpeg-команда для транскодирования из raw-потока в пользовательский.
     Аудио: если stream_cfg['audio'] = True — копируется без перекодирования.
+
+    Выходной путь берётся из stream_cfg["path"] (например "/cam1_s1"
+    → "cam1_s1"). На Windows cmd.exe не разворачивает $MTX_PATH,
+    поэтому подставляем явно. На Linux это тоже работает.
     """
     codec = stream_cfg.get("codec", "libx264")
     bitrate = stream_cfg.get("bitrate", "1000k")
@@ -196,11 +210,22 @@ def build_transcode_cmd(stream_cfg: dict) -> str:
     # Аудио: копируем без перекодирования, если включено
     audio_args = "-c:a copy" if audio else "-an"
 
+    # Выходной путь — из stream_cfg["path"] (например "/cam1_s1"
+    # → "cam1_s1"). На Windows cmd.exe не разворачивает $MTX_PATH,
+    # поэтому подставляем явно.
+    out_path = (stream_cfg.get("path") or "").lstrip("/")
+    if not out_path:
+        logger.warning(
+            "build_transcode_cmd: stream_cfg без 'path', "
+            "использую fallback $MTX_PATH (на Windows не сработает)"
+        )
+        out_path = "$MTX_PATH"
+
     rtsp_out = (
         f"-f rtsp -rtsp_transport tcp -pkt_size 800 "
         f"-muxdelay 0 -muxpreload 0 "
         f"-bsf:v h264_mp4toannexb "
-        f"rtsp://localhost:{RTSP_PORT}/$MTX_PATH"
+        f"rtsp://localhost:{RTSP_PORT}/{out_path}"
     )
 
     return (
@@ -343,7 +368,7 @@ class MediaMTXManager:
 # ----------------------------------------------------------------------
 # Конфиги путей
 # ----------------------------------------------------------------------
-def build_raw_path_config(camera) -> dict:
+def build_raw_path_config(camera, path_name: str | None = None) -> dict:
     """
     Конфиг raw-пути для MediaMTX.
 
@@ -352,7 +377,14 @@ def build_raw_path_config(camera) -> dict:
     - IP-камера с выключенным аудио: runOnInit с FFmpeg — видео копируется
       (-c:v copy), аудио убирается (-an). Нагрузка на CPU — минимальна.
     - Аналоговая камера: runOnInit с FFmpeg (видео кодируется, аудио нет).
+
+    path_name — имя пути в MediaMTX. Если не передан, генерируется
+    "__raw_<camera.id>" (обратная совместимость с вызовами из app.py
+    и streams_api.py, где path_name ещё не передавался).
     """
+    if path_name is None:
+        path_name = f"__raw_{camera.id}"
+
     if camera.type == "ip":
         audio = getattr(camera, "audio", True)
         if audio:
@@ -363,7 +395,7 @@ def build_raw_path_config(camera) -> dict:
                 "rtspTransport": "tcp",
             }
         else:
-            cmd = build_ip_passthrough_no_audio_cmd(camera)
+            cmd = build_ip_passthrough_no_audio_cmd(camera, path_name)
             return {
                 "source": "publisher",
                 "runOnInit": cmd,
@@ -371,7 +403,7 @@ def build_raw_path_config(camera) -> dict:
             }
 
     # Аналоговая камера — публикация через FFmpeg
-    cmd = build_raw_publisher_cmd(camera)
+    cmd = build_raw_publisher_cmd(camera, path_name)
     return {
         "source": "publisher",
         "runOnInit": cmd,

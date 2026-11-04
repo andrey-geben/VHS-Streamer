@@ -61,6 +61,32 @@ class Camera:
         # --- Индивидуальный путь архива (опционально) ---
         # Если пусто — используется глобальный archive.path из config.yaml.
         self.archive_path: str = (config.get("archive_path") or "").strip()
+        # --- Режим записи в архив (для отображения в UI) ---
+        # Camera их не использует во время захвата, но они нужны
+        # _camera_to_dict() в settings_api.py, иначе UI показывает
+        # дефолтные "off" / False вместо реального значения из конфига.
+        self.record: bool = bool(config.get("record", False))
+        self.record_mode: str = config.get("record_mode", "off") or "off"
+        self.event_record_duration: int = int(
+            config.get("event_record_duration", 30)
+        )
+        self.event_topics: list = list(config.get("event_topics") or [])
+        # --- Motion detection (OpenCV) — per-camera override ---
+        # True/None = включено (по умолчанию), False = явно выключено.
+        # Логика: если в config.yaml нет ключа → None → True.
+        # Если явно false → False. Если true → True.
+        self.motion_detection_enabled: bool = (
+                config.get("motion_detection_enabled") is not False
+        )
+        # Минимальная площадь движения в исходных пикселях.
+        # 100 = высокая чувствительность, 5000 = низкая.
+        self.motion_min_area: int = int(
+            config.get("motion_min_area", 500)
+        )
+
+    # ------------------------------------------------------------------
+    # Подписчики (для рекордера)
+    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     # Подписчики (для рекордера)
     # ------------------------------------------------------------------

@@ -81,3 +81,14 @@ auto.crt
 # --- Дампы и архивы ---
 *.zip
 vhs-diagnostics_*.zip
+
+
+# --- Runtime-файлы (генерируются при старте) ---
+events.db
+mediamtx.yml
+
+# --- Временные диагностические скрипты ---
+_diag_*.py
+
+# --- Временные файлы коммитов ---
+.commit-msg.txt

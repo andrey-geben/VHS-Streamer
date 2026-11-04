@@ -73,6 +73,15 @@
     <nav>
         <a href="{{ url_for('index') }}">Камеры</a>
         <a href="{{ url_for('archive_page') }}">Архив</a>
+        <a href="{{ url_for('events_page') }}">
+        События
+         <span id="menu-events-count"
+          style="display:none;
+                 background:#2a6df4; color:#fff;
+                 border-radius:10px; padding:0 8px;
+                 font-size:0.75em; margin-left:4px;
+                 line-height:1.6em;"></span>
+        </a>
         <a href="{{ url_for('settings.settings_page') }}">Настройки</a>
         <a href="{{ url_for('api_status') }}">API</a>
         {% if user %}
@@ -113,5 +122,44 @@
            style="color:#6cb2ff; text-decoration:none">О программе</a>
     </span>
 </footer>
+<div class="toast" id="global-toast"></div>
+<div class="toast" id="global-toast"></div>
+<script>
+    // Простой тостик для уведомлений
+    function showToast(text, isError) {
+        const el = document.getElementById('global-toast');
+        el.textContent = text;
+        el.className = 'toast' + (isError ? ' err' : '');
+        el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 3000);
+    }
+
+    // Обновление счётчика событий в меню (раз в 60 секунд)
+    async function updateEventsBadge() {
+        const el = document.getElementById('menu-events-count');
+        if (!el) return;
+        try {
+            const since = Math.floor(Date.now() / 1000) - 3600;
+            const r = await fetch('/api/events?since_ts=' + since + '&limit=1000');
+            if (!r.ok) { el.style.display = 'none'; return; }
+            const data = await r.json();
+            const count = (data.events || []).length;
+            if (count > 0) {
+                el.textContent = count;
+                el.style.display = 'inline-block';
+            } else {
+                el.style.display = 'none';
+            }
+        } catch (e) {
+            el.style.display = 'none';
+        }
+    }
+
+    // Первый запуск через 1 сек, потом раз в минуту
+    setTimeout(updateEventsBadge, 1000);
+    setInterval(updateEventsBadge, 60000);
+</script>
+</body>
+</body>
 </body>
 </html>

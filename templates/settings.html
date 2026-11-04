@@ -16,7 +16,7 @@
 
     <div class="form-row">
         <button class="btn" onclick="onvifDiscover()" id="btn-onvif-discover">
-            🔍 Найти ONVIF-камеры
+            🔍 Найти камеры (ONVIF + SADP)
         </button>
         <span class="muted" id="onvif-status" style="margin-left:10px; font-size:0.9em"></span>
     </div>
@@ -36,22 +36,47 @@
         <table id="onvif-table">
             <thead>
                 <tr>
-                    <th>IP</th>
+                    <th style="width:12%">IP</th>
+                    <th style="width:12%">Источник</th>
                     <th>Имя / Модель</th>
+                    <th style="width:22%">MAC / S/N</th>
                     <th>Endpoint</th>
+                    <th style="width:10%">Действия</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+<!-- ============= КАМЕРЫ ============= -->
+<div class="card">
+    <h3 style="margin-top:0; display:flex; justify-content:space-between; align-items:center">
+               Камеры
+        <button class="btn" onclick="openCameraModal()">+ Добавить камеру</button>
+    </h3>
+
+    <div class="form-row" style="margin-bottom:10px">
+        <button class="btn" onclick="discoverLocalDevices()" id="btn-discover-local">
+            🔍 Найти локальные устройства
+        </button>
+        <span class="muted" id="discover-local-status"
+              style="margin-left:10px; font-size:0.9em"></span>
+    </div>
+
+    <div id="local-devices-results" style="display:none; margin-bottom:16px">
+        <table id="local-devices-table">
+            <thead>
+                <tr>
+                    <th>Устройство</th>
+                    <th>Транспорт</th>
+                    <th>Индекс</th>
+                    <th>Источник</th>
                     <th>Действия</th>
                 </tr>
             </thead>
             <tbody></tbody>
         </table>
     </div>
-</div>
-
-<!-- ============= КАМЕРЫ ============= -->
-<div class="card">
-    <h3 style="margin-top:0; display:flex; justify-content:space-between; align-items:center">
-        Камеры
-        <button class="btn" onclick="openCameraModal()">+ Добавить камеру</button>
     </h3>
     <table id="cameras-table">
         <thead>
@@ -182,7 +207,7 @@
                 <th>RTSP-адреса для копирования</th>
                 <th style="width:18%">Тип</th>
                 <th style="width:12%">Статус</th>
-                <th style="width:8%">Действия</th>
+                <th style="width:14%">Действия</th>
             </tr>
         </thead>
         <tbody></tbody>
@@ -522,6 +547,34 @@
                 </div>
             </div>
 
+                        <!-- Motion detection (OpenCV) -->
+            <div class="form-row checkbox-row" id="row-md-enable">
+                <label>Motion detection (OpenCV)</label>
+                <input type="checkbox" id="m-md-enabled"
+                       onchange="updateMdVisibility()">
+                <span class="muted" style="font-size:0.85em">
+                    независимо от ONVIF Events
+                </span>
+            </div>
+
+            <div class="form-row" id="row-md-min-area">
+                <label>Чувствительность</label>
+                <div style="display:flex; align-items:center; gap:12px">
+                    <input type="range" id="m-md-min-area"
+                           min="100" max="5000" step="50" value="500"
+                           style="flex:1" oninput="updateMdSliderLabel()">
+                    <span id="m-md-min-area-label" class="muted"
+                          style="min-width:140px; text-align:right">500 px</span>
+                </div>
+            </div>
+            <p class="hint" id="md-hint"
+               style="margin-left:182px; font-size:0.82em; color:#8b96a5;
+                      margin-top:-4px; line-height:1.5;">
+                Меньше — чувствительнее (ловит мелкое движение), но больше
+                ложных срабатываний. Больше — реагирует только на крупные
+                объекты. Нагрузка на CPU: ~5–15% одного ядра на камеру.
+            </p>
+
             <!-- PTZ -->
             <div id="m-ptz-section"
                  style="display:none; margin-top:20px;
@@ -610,6 +663,105 @@
         <div id="limit-streams-list" style="margin-top:14px"></div>
         <div style="text-align:right; margin-top:20px">
             <button class="btn secondary" onclick="closeLimitModal()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============= МОДАЛКА РЕДАКТИРОВАНИЯ ПОТОКА ============= -->
+<div id="edit-stream-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:115;">
+    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:560px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
+        <h3 style="margin-top:0">Редактирование потока</h3>
+
+        <p class="muted" style="margin-top:-4px; margin-bottom:14px">
+            Поток: <b id="esm-stream-id"></b>
+        </p>
+
+        <div class="form-row">
+            <label>RTSP-адрес</label>
+            <input type="text" id="esm-path" placeholder="/my_path" style="flex:1">
+        </div>
+        <p class="muted" style="margin-top:-4px; margin-bottom:12px; font-size:0.82em">
+            Должен начинаться с «/». Не может быть «/», «/__raw_*»,
+            содержать пробелы или совпадать с другим потоком.
+            <b>При смене все текущие читатели отключатся</b> — у MediaMTX нет rename.
+        </p>
+
+        <div class="form-row">
+            <label>Белый список IP</label>
+            <input type="text" id="esm-allowed-ips"
+                   placeholder="192.168.1.0/24, 10.0.0.5" style="flex:1">
+        </div>
+        <p class="muted" style="margin-top:-4px; margin-bottom:12px; font-size:0.82em">
+            Через запятую. IP или CIDR. Пусто = доступ с любого IP.
+        </p>
+
+        <div class="form-row">
+            <label>Пароль на чтение</label>
+            <input type="password" id="esm-read-password"
+                   placeholder="Пусто = не менять" style="flex:1">
+        </div>
+        <p class="muted" style="margin-top:-4px; margin-bottom:12px; font-size:0.82em">
+            ⚠️ RTSP без TLS: пароль передаётся открытым текстом.
+            Без VPN/локальной сети есть риск перехвата.
+            VLC и другие плееры кэшируют учётные данные — смена пароля
+            может не примениться до очистки кэша у клиента.
+        </p>
+
+        <div id="esm-error" style="display:none; color:#f16a6a; font-size:0.9em;
+                                   background:#2a1a1a; border:1px solid #4a2a2a;
+                                   border-radius:4px; padding:8px 12px;
+                                   margin-bottom:12px;"></div>
+
+                <div style="text-align:right; margin-top:20px">
+            <button class="btn secondary" onclick="closeEditStreamModal()">Отмена</button>
+            <button class="btn" onclick="saveEditStream()" id="esm-save-btn">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============= МОДАЛКА «ПОТОК СОЗДАН» (пароль показывается 1 раз) ============= -->
+<div id="stream-created-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:118;">
+    <div style="background:#1e2126; padding:24px; border-radius:10px; max-width:520px; margin:60px auto; border:1px solid #2a2f37; max-height:85vh; overflow-y:auto;">
+        <h3 style="margin-top:0; color:#57d87a">✓ Поток создан</h3>
+
+        <p class="muted" style="margin-top:-4px; margin-bottom:14px">
+            ID: <b id="scm-stream-id"></b><br>
+            Путь: <code id="scm-stream-path"></code>
+        </p>
+
+               <p style="margin-bottom:8px"><b>Пароль на чтение:</b></p>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px">
+            <input type="text" id="scm-password" readonly
+                   style="flex:1; font-family:monospace; font-size:1.05em;
+                          background:#14161a; padding:8px 12px;
+                          border:1px solid #2a2f37; border-radius:4px;
+                          color:#e8e8e8">
+            <button class="btn" type="button" onclick="copyStreamPassword()">📋 Скопировать</button>
+        </div>
+
+        <div id="scm-urls-block" style="display:none; margin-bottom:14px">
+            <p style="margin-bottom:6px"><b>Готовые RTSP-адреса (с паролем):</b></p>
+            <div id="scm-urls-list"></div>
+            <p class="muted" style="font-size:0.82em; margin-top:6px">
+                Эти URL работают сразу — можно вставить в VLC/плеер.
+                ⚠️ Пароль в URL передаётся открытым текстом (RTSP без TLS).
+            </p>
+        </div>
+
+        <div style="background:#2a1a1a; border:1px solid #4a2a2a; border-radius:4px;
+                    padding:8px 12px; margin-bottom:18px;
+                    color:#f16a6a; font-size:0.9em">
+            ⚠️ Пароль показывается <b>один раз</b>. Сохраните его сейчас —
+            позже увидеть нельзя, только сменить (кнопка ✎ у потока).
+        </div>
+
+        <p class="muted" style="font-size:0.85em; margin-bottom:14px">
+            Для подключения к потоку используйте логин <code>vhs_&lt;ID&gt;</code>
+            и этот пароль. Поток защищён от чтения без авторизации.
+        </p>
+
+        <div style="text-align:right">
+            <button class="btn" onclick="closeStreamCreatedModal()">Я сохранил пароль</button>
         </div>
     </div>
 </div>
@@ -800,6 +952,79 @@ function detectVendorClient(url) {
     return null;
 }
 
+
+// =====================================================================
+// ЛОКАЛЬНЫЕ УСТРОЙСТВА (DirectShow / V4L2)
+// =====================================================================
+let _localDevices = [];
+
+async function discoverLocalDevices() {
+    const btn = document.getElementById('btn-discover-local');
+    const status = document.getElementById('discover-local-status');
+    const results = document.getElementById('local-devices-results');
+    btn.disabled = true;
+    status.textContent = 'ищу устройства...';
+    try {
+        const r = await api('GET', '/api/devices/local');
+        _localDevices = r.devices || [];
+        const tbody = document.querySelector('#local-devices-table tbody');
+        tbody.innerHTML = '';
+        if (_localDevices.length === 0) {
+            results.style.display = 'none';
+            status.textContent = 'устройства не найдены';
+            return;
+        }
+        _localDevices.forEach((d, idx) => {
+            const tr = document.createElement('tr');
+            const transport = d.transport || 'dshow';
+            const source = d.source || (transport === 'dshow' ? d.name : '—');
+            tr.innerHTML =
+                '<td>' + escapeHtml(d.name) + '</td>' +
+                '<td>' + escapeHtml(transport) + '</td>' +
+                '<td>' + escapeHtml(String(d.capture_index)) + '</td>' +
+                '<td style="font-size:0.85em; color:#8b96a5">' + escapeHtml(source) + '</td>' +
+                '<td><button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
+                    'onclick="addLocalDevice(' + idx + ')">+ Добавить</button></td>';
+            tbody.appendChild(tr);
+        });
+        results.style.display = 'block';
+        status.textContent = 'найдено: ' + _localDevices.length;
+    } catch (e) {
+        status.textContent = 'ошибка: ' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function addLocalDevice(idx) {
+    const d = _localDevices[idx];
+    if (!d) return;
+
+    // 1. Открываем модалку новой камеры — она сбросит поля в дефолт
+    openCameraModal();
+
+    // 2. Предзаполняем из найденного устройства
+    document.getElementById('m-id').value = d.id_suggested || '';
+    document.getElementById('m-name').value = d.name || '';
+
+    const typeSel = document.getElementById('m-type');
+    typeSel.value = 'analog';
+    // dispatch change, чтобы сработал updateAudioRowVisibility()
+    typeSel.dispatchEvent(new Event('change'));
+
+    const source = d.source || d.name || '';
+    document.getElementById('m-source').value = source;
+
+    document.getElementById('m-capture-index').value =
+        (d.capture_index === null || d.capture_index === undefined)
+            ? '' : d.capture_index;
+
+    // транспорт — только для IP-камер; для аналоговых оставляем пустым
+    document.getElementById('m-transport').value = '';
+
+    showToast('Поля предзаполнены. Проверьте и нажмите «Сохранить».');
+}
+
 function updateAudioRowVisibility() {
     const type = document.getElementById('m-type').value;
     const row = document.getElementById('row-audio-enable');
@@ -899,6 +1124,26 @@ function onRecordModeChange() {
 }
 
 // =====================================================================
+// MOTION DETECTION (OpenCV) — слайдер и видимость
+// =====================================================================
+function updateMdSliderLabel() {
+    const val = parseInt(document.getElementById('m-md-min-area').value) || 500;
+    const el = document.getElementById('m-md-min-area-label');
+    let level = '';
+    if (val <= 300) level = ' · высокая';
+    else if (val <= 1000) level = ' · средняя';
+    else if (val <= 2000) level = '';
+    else level = ' · низкая';
+    el.textContent = val + ' px' + level;
+}
+
+function updateMdVisibility() {
+    const enabled = document.getElementById('m-md-enabled').checked;
+    document.getElementById('row-md-min-area').style.display = enabled ? 'grid' : 'none';
+    document.getElementById('md-hint').style.display = enabled ? 'block' : 'none';
+}
+
+// =====================================================================
 // МОДАЛКА КАМЕРЫ
 // =====================================================================
 function openCameraModal(cameraId) {
@@ -934,6 +1179,12 @@ function openCameraModal(cameraId) {
         document.querySelectorAll('.m-event-topic').forEach(cb => {
             cb.checked = topics.includes(cb.value);
         });
+
+        // Motion detection (OpenCV)
+        document.getElementById('m-md-enabled').checked =
+            (c.motion_detection_enabled !== false);
+        document.getElementById('m-md-min-area').value =
+            c.motion_min_area || 500;
     } else {
         document.getElementById('m-id').value = '';
         document.getElementById('m-id').disabled = false;
@@ -960,9 +1211,15 @@ function openCameraModal(cameraId) {
         document.querySelectorAll('.m-event-topic').forEach(cb => {
             cb.checked = (cb.value === 'motion');
         });
+
+        // Motion detection (OpenCV) — дефолты для новой камеры
+        document.getElementById('m-md-enabled').checked = true;
+        document.getElementById('m-md-min-area').value = 500;
     }
     updateAudioRowVisibility();
     onRecordModeChange();
+    updateMdSliderLabel();
+    updateMdVisibility();
     loadPtzInfo(cameraId);
     document.getElementById('camera-modal').style.display = 'flex';
 }
@@ -1037,6 +1294,10 @@ async function saveCamera() {
         event_topics: eventTopics,
         has_audio: hasAudio,
         audio: document.getElementById('m-audio').checked,
+        motion_detection_enabled:
+            document.getElementById('m-md-enabled').checked,
+        motion_min_area:
+            parseInt(document.getElementById('m-md-min-area').value) || 500,
     };
     try {
         if (mode === 'edit') {
@@ -1431,22 +1692,33 @@ async function loadStreams() {
             ? (ready ? '<span class="status-on">● готов' + (readers ? ' (' + readers + ')' : '') + '</span>' : '<span class="muted">○ ожидание</span>')
             : '<span class="muted">○ выключен</span>';
 
-        const urls = s.urls || [];
+                const urls = s.urls || [];
         const urlsHtml = urls.map(u =>
             '<div style="display:flex; align-items:center; gap:8px; margin:2px 0">' +
                 '<code style="font-size:0.85em; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">' + escapeHtml(u.url) + '</code>' +
-                '<span class="muted" style="font-size:0.8em; white-space:nowrap">' + escapeHtml(u.label) + '</span>' +
+                '<span class="muted" style="font-size:0.8em; white-space:nowrap">' + escapeHtml(u.label) + (u.requires_auth ? ' 🔒' : '') + '</span>' +
                 '<button class="btn secondary" style="padding:3px 8px; font-size:0.8em" onclick="copyText(\'' + escapeHtml(u.url) + '\')">📋</button>' +
             '</div>'
         ).join('');
 
+                        // Значок 🔒 рядом с ID, если задан read_password
+        // (has_read_password — маскированное поле из API, plaintext не отдаётся)
+        const lockIcon = s.has_read_password ? ' 🔒' : '';
+        // Значок [N IP] рядом с типом, если задан allowed_ips
+        const ipsArr = Array.isArray(s.allowed_ips) ? s.allowed_ips : [];
+        const ipsBadge = ipsArr.length
+            ? ' <span class="muted" style="font-size:0.8em">[' +
+              ipsArr.length + ' IP]</span>'
+            : '';
+
         tr.innerHTML =
-            '<td><b>' + escapeHtml(s.id) + '</b></td>' +
+            '<td><b>' + escapeHtml(s.id) + '</b>' + lockIcon + '</td>' +
             '<td>' + escapeHtml(s.camera_name) + '</td>' +
             '<td>' + (urlsHtml || '<span class="muted">—</span>') + '</td>' +
-            '<td>' + typeLabel + '</td>' +
+            '<td>' + typeLabel + ipsBadge + '</td>' +
             '<td>' + stateLabel + '</td>' +
             '<td>' +
+                '<button class="btn secondary" title="Редактировать" onclick="editStream(\'' + escapeHtml(s.id) + '\')">✎</button> ' +
                 '<button class="btn secondary" onclick="toggleStream(\'' + escapeHtml(s.id) + '\')">' + (s.enabled ? '⏸' : '▶') + '</button> ' +
                 '<button class="btn danger" onclick="deleteStream(\'' + escapeHtml(s.id) + '\')">✕</button>' +
             '</td>';
@@ -1477,11 +1749,18 @@ async function createStream() {
     }
     const payload = { camera_id: cameraId, transcode: transcode };
     if (transcodePayload) Object.assign(payload, transcodePayload);
-    try {
+        try {
         const r = await api('POST', '/api/streams', payload);
-        showToast('Поток создан: ' + r.stream.path);
         await loadStreams();
         await loadStreamCameras();
+        if (r.generated_password) {
+            openStreamCreatedModal(
+                r.stream.id, r.stream.path, r.generated_password,
+                r.generated_urls
+            );
+        } else {
+            showToast('Поток создан: ' + r.stream.path);
+        }
     } catch (e) {}
 }
 
@@ -1501,6 +1780,94 @@ async function toggleStream(id) {
         showToast(r.enabled ? 'Поток включён' : 'Поток выключен');
         await loadStreams();
     } catch (e) {}
+}
+
+// =====================================================================
+// РЕДАКТИРОВАНИЕ ПОТОКА (PATCH /api/streams/<id>)
+// =====================================================================
+let _editingStream = null;
+
+function editStream(streamId) {
+    const s = allStreams.find(x => x.id === streamId);
+    if (!s) {
+        showToast('Поток не найден', true);
+        return;
+    }
+    _editingStream = s;
+    document.getElementById('esm-stream-id').textContent = streamId;
+    document.getElementById('esm-path').value = s.path || '';
+    const ips = Array.isArray(s.allowed_ips) ? s.allowed_ips : [];
+    document.getElementById('esm-allowed-ips').value = ips.join(', ');
+        // Пароль никогда не показываем — только placeholder
+    document.getElementById('esm-read-password').value = '';
+    document.getElementById('esm-read-password').placeholder =
+        s.has_read_password ? 'Задан — пусто = не менять' : 'Пусто = не задан';
+    document.getElementById('esm-error').style.display = 'none';
+    document.getElementById('esm-error').textContent = '';
+    document.getElementById('esm-save-btn').disabled = false;
+    document.getElementById('edit-stream-modal').style.display = 'block';
+}
+
+function closeEditStreamModal() {
+    document.getElementById('edit-stream-modal').style.display = 'none';
+    _editingStream = null;
+}
+
+async function saveEditStream() {
+    if (!_editingStream) return;
+    const s = _editingStream;
+
+    const newPath = document.getElementById('esm-path').value.trim();
+    const ipsRaw = document.getElementById('esm-allowed-ips').value;
+    const newPassword = document.getElementById('esm-read-password').value;
+
+    const oldIps = Array.isArray(s.allowed_ips) ? s.allowed_ips : [];
+    const newIps = ipsRaw
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+
+    const payload = {};
+
+    if (newPath && newPath !== s.path) {
+        payload.path = newPath;
+    }
+
+    // Сравниваем массивы как строки (порядок важен)
+    const oldIpsStr = oldIps.join(',');
+    const newIpsStr = newIps.join(',');
+    if (oldIpsStr !== newIpsStr) {
+        payload.allowed_ips = newIps;
+    }
+
+    // Пустая строка = не менять (по ТЗ)
+    if (newPassword !== '') {
+        payload.read_password = newPassword;
+    }
+
+    if (Object.keys(payload).length === 0) {
+        showToast('Нет изменений', true);
+        return;
+    }
+
+    const btn = document.getElementById('esm-save-btn');
+    const errBox = document.getElementById('esm-error');
+    btn.disabled = true;
+    errBox.style.display = 'none';
+    errBox.textContent = '';
+
+    try {
+        await api('PATCH',
+            '/api/streams/' + encodeURIComponent(s.id),
+            payload);
+        showToast('Поток обновлён');
+        closeEditStreamModal();
+        await loadStreams();
+    } catch (e) {
+        errBox.textContent = e.message || 'Ошибка сохранения';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+    }
 }
 
 let _limitContext = null;
@@ -1538,12 +1905,78 @@ async function replaceStream(removeStreamId) {
         await new Promise(r => setTimeout(r, 300));
         const payload = { camera_id: cameraId, transcode: transcode };
         if (transcode && transcodePayload) Object.assign(payload, transcodePayload);
-        const r = await api('POST', '/api/streams', payload);
-        showToast('Поток заменён: ' + r.stream.path);
+                const r = await api('POST', '/api/streams', payload);
         closeLimitModal();
         await loadStreams();
         await loadStreamCameras();
+        if (r.generated_password) {
+            openStreamCreatedModal(
+                r.stream.id, r.stream.path, r.generated_password,
+                r.generated_urls
+            );
+        } else {
+            showToast('Поток заменён: ' + r.stream.path);
+        }
     } catch (e) {}
+}
+// =====================================================================
+// МОДАЛКА «ПОТОК СОЗДАН» — показ сгенерированного пароля (1 раз)
+// =====================================================================
+function openStreamCreatedModal(streamId, streamPath, password, urls) {
+    document.getElementById('scm-stream-id').textContent = streamId;
+    document.getElementById('scm-stream-path').textContent = streamPath;
+    document.getElementById('scm-password').value = password;
+
+    // Готовые RTSP-URL с паролем (Вариант C — показываются в модалке)
+    const urlsBlock = document.getElementById('scm-urls-block');
+    const urlsList = document.getElementById('scm-urls-list');
+    urlsList.innerHTML = '';
+    if (Array.isArray(urls) && urls.length > 0) {
+        urls.forEach(u => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; align-items:center; gap:8px; margin:4px 0';
+            const safeUrl = escapeHtml(u.url);
+            const safeLabel = escapeHtml(u.label || '');
+            row.innerHTML =
+                '<code style="flex:1; font-size:0.82em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">' +
+                    safeUrl + '</code>' +
+                '<span class="muted" style="font-size:0.78em; white-space:nowrap">' +
+                    safeLabel + '</span>' +
+                '<button class="btn secondary" style="padding:3px 8px; font-size:0.8em" ' +
+                    'onclick="copyText(\'' + safeUrl + '\')">📋</button>';
+            urlsList.appendChild(row);
+        });
+        urlsBlock.style.display = 'block';
+    } else {
+        urlsBlock.style.display = 'none';
+    }
+
+    document.getElementById('stream-created-modal').style.display = 'block';
+}
+
+function closeStreamCreatedModal() {
+    // Очищаем пароль и URL — чтобы не остались в DOM после закрытия
+    document.getElementById('scm-password').value = '';
+    document.getElementById('scm-urls-list').innerHTML = '';
+    document.getElementById('scm-urls-block').style.display = 'none';
+    document.getElementById('stream-created-modal').style.display = 'none';
+}
+
+async function copyStreamPassword() {
+    const inp = document.getElementById('scm-password');
+    if (!inp.value) return;
+    try {
+        await navigator.clipboard.writeText(inp.value);
+        showToast('Пароль скопирован');
+    } catch (e) {
+        inp.select();
+        try {
+            document.execCommand('copy');
+            showToast('Пароль скопирован');
+        } catch (err) {
+            showToast('Не удалось скопировать', true);
+        }
+    }
 }
 
 // =====================================================================
@@ -1554,41 +1987,91 @@ function downloadDiagnostics() {
     window.location.href = '/api/diagnostics/download';
 }
 
-// =====================================================================
-// ONVIF
-// =====================================================================
+// Значок источника устройства (ONVIF / SADP / оба)
+function renderDiscoverySourceBadge(source) {
+    const s = (source || '').toLowerCase();
+    if (s === 'onvif') {
+        return '<span style="background:#1e3a5f; color:#8ec5ff; ' +
+               'padding:2px 8px; border-radius:3px; font-size:0.8em">ONVIF</span>';
+    }
+    if (s === 'sadp') {
+        return '<span style="background:#4a2a2a; color:#ff8e8e; ' +
+               'padding:2px 8px; border-radius:3px; font-size:0.8em">SADP</span>';
+    }
+    if (s === 'onvif+sadp') {
+        return '<span style="background:#2a4a2a; color:#8eff8e; ' +
+               'padding:2px 8px; border-radius:3px; font-size:0.8em">' +
+               'ONVIF+SADP</span>';
+    }
+    return '<span class="muted">—</span>';
+}
+
 async function onvifDiscover() {
     const btn = document.getElementById('btn-onvif-discover');
     const status = document.getElementById('onvif-status');
     btn.disabled = true;
-    status.textContent = 'сканирую сеть (до 5 сек)...';
+    status.textContent = 'сканирую сеть (ONVIF + SADP, до 5 сек)...';
     try {
         const r = await api('POST', '/api/onvif/discover', { timeout: 4 });
         _onvifDevices = r.devices || [];
         const resultsDiv = document.getElementById('onvif-results');
         const tbody = document.querySelector('#onvif-table tbody');
         tbody.innerHTML = '';
+
         if (_onvifDevices.length === 0) {
-            status.textContent = 'не найдено ни одной камеры';
+            const bs = r.by_source || {};
+            status.textContent = 'не найдено ни одной камеры ' +
+                '(ONVIF: ' + (bs.onvif || 0) + ', SADP: ' + (bs.sadp || 0) + ')';
             resultsDiv.style.display = 'none';
             return;
         }
+
         _onvifDevices.forEach(d => {
             const tr = document.createElement('tr');
+
+            // Имя / модель: из ONVIF (scopes) или SADP (model)
             const nameModel = [
                 d.name ? escapeHtml(d.name) : '',
                 d.hardware ? escapeHtml(d.hardware) : '',
+                d.model && d.model !== d.name ? escapeHtml(d.model) : '',
             ].filter(Boolean).join(' / ') || '<span class="muted">—</span>';
+
+            // MAC / S/N
+            const macSn = [
+                d.mac ? 'MAC: ' + escapeHtml(d.mac) : '',
+                d.serial ? 'S/N: ' + escapeHtml(d.serial) : '',
+            ].filter(Boolean).join('<br>') || '<span class="muted">—</span>';
+
+            // Endpoint (для SADP-only — best guess)
+            const epDisplay = d.endpoint
+                ? escapeHtml(d.endpoint)
+                : '<span class="muted">—</span>';
+
+            // Кнопка "Подключить" — только если есть endpoint
+            const connectBtn = d.endpoint
+                ? '<button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
+                  'onclick="openOnvifModal(\'' + escapeHtml(d.endpoint) + '\')">Подключить</button>'
+                : '<span class="muted">—</span>';
+
             tr.innerHTML =
                 '<td><b>' + escapeHtml(d.ip) + '</b></td>' +
+                '<td>' + renderDiscoverySourceBadge(d.source) + '</td>' +
                 '<td>' + nameModel + '</td>' +
-                '<td style="font-size:0.85em; color:#8b96a5">' + escapeHtml(d.endpoint) + '</td>' +
-                '<td><button class="btn" style="padding:4px 10px; font-size:0.85em" ' +
-                    'onclick="openOnvifModal(\'' + escapeHtml(d.endpoint) + '\')">Подключить</button></td>';
+                '<td style="font-size:0.8em; color:#8b96a5">' + macSn + '</td>' +
+                '<td style="font-size:0.85em; color:#8b96a5">' + epDisplay + '</td>' +
+                '<td>' + connectBtn + '</td>';
             tbody.appendChild(tr);
         });
+
         resultsDiv.style.display = 'block';
-        status.textContent = 'найдено: ' + _onvifDevices.length;
+
+        const bs = r.by_source || {};
+        const parts = [];
+        if (bs.onvif) parts.push('ONVIF: ' + bs.onvif);
+        if (bs.sadp) parts.push('SADP: ' + bs.sadp);
+        if (bs.both) parts.push('оба: ' + bs.both);
+        status.textContent = 'найдено: ' + _onvifDevices.length +
+            (parts.length ? ' (' + parts.join(', ') + ')' : '');
     } catch (e) {
         status.textContent = 'ошибка: ' + e.message;
     } finally {

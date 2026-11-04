@@ -14,6 +14,11 @@ API управления конфигурацией + страница наст�
     - шаблоны RTSP-путей по вендорам (Hikvision, Dahua, Reolink, Axis);
     - индивидуальный путь архива для каждой камеры.
 """
+from auth import login_required, admin_required
+from camera import Camera
+from recorder import Recorder
+from event_recorder import EventRecorder
+import camera_templates as ct
 import copy
 import logging
 import platform
@@ -29,6 +34,7 @@ from flask import (
 from auth import login_required, admin_required
 from camera import Camera
 from recorder import Recorder
+from event_recorder import EventRecorder
 import camera_templates as ct
 
 logger = logging.getLogger(__name__)
@@ -150,6 +156,10 @@ def _camera_to_dict(cam: Camera) -> dict:
         "record_mode": getattr(cam, "record_mode", "off"),
         "event_record_duration": getattr(cam, "event_record_duration", 30),
         "event_topics": getattr(cam, "event_topics", []),
+        "motion_detection_enabled": getattr(
+            cam, "motion_detection_enabled", True
+        ),
+        "motion_min_area": getattr(cam, "motion_min_area", 500),
         "connected": cam._connected,
         "last_error": cam._last_error,
     }
@@ -160,6 +170,42 @@ def _find_camera_cfg(cfg: dict, cam_id: str) -> dict | None:
         if c.get("id") == cam_id:
             return c
     return None
+
+
+def _attach_motion_detector(cam: Camera, cam_cfg: dict, replace: bool = False):
+    """
+    Подписать MotionDetector на камеру.
+    replace=True — сначала detach (для update: пересоздать с новыми настройками).
+    Если mgr не запущен (motion_detection выключен/отсутствует в config.yaml) —
+    тихо пропускает.
+    """
+    mgr = current_app.config.get("MOTION_DETECTOR_MGR")
+    if mgr is None:
+        return
+    try:
+        if replace:
+            mgr.detach_camera(cam.id)
+        mgr.attach_camera(cam.id, cam_cfg)
+        cam.subscribe(
+            lambda frame, cid=cam.id: mgr.process_frame(cid, frame)
+        )
+    except Exception as e:
+        logger.exception(
+            "[%s] Не удалось подписать MotionDetector: %s", cam.id, e,
+        )
+
+
+def _detach_motion_detector(camera_id: str):
+    """Отписать MotionDetector от камеры (при удалении)."""
+    mgr = current_app.config.get("MOTION_DETECTOR_MGR")
+    if mgr is None:
+        return
+    try:
+        mgr.detach_camera(camera_id)
+    except Exception as e:
+        logger.exception(
+            "[%s] Не удалось отписать MotionDetector: %s", camera_id, e,
+        )
 
 
 def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, str]:
@@ -240,6 +286,22 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
     if not event_topics:
         event_topics = ["motion"]
 
+    # Motion detection (OpenCV) — per-camera override
+    mde_raw = payload.get("motion_detection_enabled")
+    if mde_raw is None:
+        motion_detection_enabled = True
+    else:
+        motion_detection_enabled = bool(mde_raw)
+
+    try:
+        motion_min_area = int(payload.get("motion_min_area", 500))
+        if motion_min_area < 100:
+            motion_min_area = 100
+        if motion_min_area > 5000:
+            motion_min_area = 5000
+    except (TypeError, ValueError):
+        motion_min_area = 500
+
     cfg = {
         "id": cam_id,
         "name": str(payload["name"]).strip(),
@@ -257,8 +319,10 @@ def _build_camera_cfg_from_payload(payload: dict, cam_id: str) -> tuple[dict, st
         "transport": payload.get("transport") or None,
         "open_timeout_ms": int(payload.get("open_timeout_ms", 5000)),
         "read_timeout_ms": int(payload.get("read_timeout_ms", 5000)),
-        "has_audio": has_audio,
+                "has_audio": has_audio,
         "audio": audio,
+        "motion_detection_enabled": motion_detection_enabled,
+        "motion_min_area": motion_min_area,
     }
     return cfg, ""
 
@@ -431,31 +495,35 @@ def api_add_camera():
 
     if archive_on and mode == "always":
         try:
-            rec = Recorder(new_cam, archive_cfg, new_cfg)
+            rec = Recorder(cam, archive_cfg, new_cfg)
             rec.start()
-            st["recorders"][camera_id] = rec
+            st["recorders"][cam_id] = rec
+            logger.info("[%s] Режим записи: постоянная", cam_id)
         except Exception:
-            logger.exception("Ошибка создания Recorder")
+            logger.exception("[%s] Ошибка создания Recorder", cam_id)
     elif archive_on and mode == "events":
         em = current_app.config.get("EVENTS_MANAGER")
         if not em:
             logger.warning(
-                "Режим 'events' для %s, но EventsManager не запущен",
-                camera_id,
+                "[%s] Режим 'events', но EventsManager не запущен", cam_id,
             )
         else:
             try:
-                rec = EventRecorder(new_cam, archive_cfg, new_cfg, em)
+                rec = EventRecorder(cam, archive_cfg, new_cfg, em)
                 rec.start()
-                st["recorders"][camera_id] = rec
+                st["recorders"][cam_id] = rec
+                logger.info("[%s] Режим записи: по событиям", cam_id)
             except Exception:
-                logger.exception("Ошибка создания EventRecorder")
+                logger.exception("[%s] Ошибка создания EventRecorder", cam_id)
+    else:
+        logger.info("[%s] Запись в архив отключена", cam_id)
 
-    st["config"].setdefault("cameras", []).append(new_cfg)
-    _save_config(st["config"], st["config_path"])
+        st["config"].setdefault("cameras", []).append(new_cfg)
+        _save_config(st["config"], st["config_path"])
 
-    return jsonify({"ok": True, "camera": _camera_to_dict(cam)}), 201
+        _attach_motion_detector(cam, new_cfg, replace=False)
 
+        return jsonify({"ok": True, "camera": _camera_to_dict(cam)}), 201
 
 @settings_bp.route("/api/cameras/<camera_id>", methods=["PUT"])
 @admin_required
@@ -499,18 +567,45 @@ def api_update_camera(camera_id: str):
     st["cameras"][camera_id] = new_cam
 
     archive_cfg = st["config"].get("archive", {})
-    if (new_cfg.get("record", False)
-            and archive_cfg.get("enabled", False)
-            and archive_cfg.get("record_all", True)):
+    archive_on = (
+            archive_cfg.get("enabled", False)
+            and archive_cfg.get("record_all", True)
+    )
+    mode = new_cfg.get("record_mode", "off")
+
+    if archive_on and mode == "always":
         try:
             rec = Recorder(new_cam, archive_cfg, new_cfg)
             rec.start()
             st["recorders"][camera_id] = rec
+            logger.info("[%s] Режим записи: постоянная", camera_id)
         except Exception:
-            logger.exception("Ошибка создания рекордера")
+            logger.exception("[%s] Ошибка создания Recorder", camera_id)
+    elif archive_on and mode == "events":
+        em = current_app.config.get("EVENTS_MANAGER")
+        if not em:
+            logger.warning(
+                "[%s] Режим 'events', но EventsManager не запущен",
+                camera_id,
+            )
+        else:
+            try:
+                rec = EventRecorder(new_cam, archive_cfg, new_cfg, em)
+                rec.start()
+                st["recorders"][camera_id] = rec
+                logger.info("[%s] Режим записи: по событиям", camera_id)
+            except Exception:
+                logger.exception(
+                    "[%s] Ошибка создания EventRecorder", camera_id,
+                )
+    else:
+        logger.info("[%s] Запись в архив отключена", camera_id)
 
     st["config"].setdefault("cameras", []).append(new_cfg)
     _save_config(st["config"], st["config_path"])
+
+    # replace=True: detach старый детектор + attach новый (с настройками)
+    _attach_motion_detector(new_cam, new_cfg, replace=True)
 
     return jsonify({"ok": True, "camera": _camera_to_dict(new_cam)})
 
@@ -535,6 +630,8 @@ def api_delete_camera(camera_id: str):
         st["config"]["cameras"].remove(old_cfg)
         _save_config(st["config"], st["config_path"])
 
+    _detach_motion_detector(camera_id)
+
     return jsonify({"ok": True})
 
 
@@ -548,6 +645,37 @@ def api_restart_camera(camera_id: str):
     cam.stop()
     cam.start()
     return jsonify({"ok": True})
+
+
+# ======================================================================
+# API: обнаружение локальных устройств захвата
+# (веб-камеры, USB/PCI-карты — не IP, не RTSP)
+# ======================================================================
+@settings_bp.route("/api/devices/local", methods=["GET"])
+@login_required
+def api_list_local_devices():
+    """
+    Обнаруживает локальные устройства захвата видео на машине сервера.
+    Windows: DirectShow через FFmpeg -list_devices.
+    Linux:   /dev/video* (+ v4l2-ctl для имени, если установлен).
+    macOS:   пустой список (не поддерживается в задаче №1).
+
+    Импорт device_discovery — внутри функции, чтобы ошибка импорта
+    (например, отсутствует FFmpeg) не валила весь settings_bp.
+    """
+    try:
+        from device_discovery import discover_local_devices
+        devices = discover_local_devices()
+    except Exception as e:
+        logger.exception("Ошибка обнаружения локальных устройств")
+        return jsonify({
+            "error": f"Не удалось обнаружить устройства: {e}",
+            "devices": [],
+        }), 500
+
+    logger.info("Обнаружение локальных устройств: найдено %d", len(devices))
+    return jsonify({"devices": devices})
+
 
 
 # ======================================================================
@@ -744,30 +872,166 @@ def api_camera_autofill():
 
 
 # ======================================================================
-# API: ONVIF — обнаружение камер
+# API: обнаружение камер (ONVIF WS-Discovery + Hikvision SADP)
 # ======================================================================
+def _merge_discovery_results(onvif_list: list, sadp_list: list) -> list:
+    """
+    Объединяет результаты ONVIF WS-Discovery и SADP по IP.
+
+    Приоритет полей:
+        - ONVIF: endpoint, name (scopes), hardware, xaddrs, scopes
+        - SADP:  mac, serial, model, firmware, http_port, command_port
+
+    Возвращает единый список. Каждое устройство:
+        {
+          "ip", "endpoint", "name", "hardware", "scopes", "xaddrs",
+          "mac", "serial", "model", "firmware",
+          "http_port", "command_port", "dhcp", "activated",
+          "source": "onvif" | "sadp" | "onvif+sadp",
+        }
+    """
+    by_ip: dict[str, dict] = {}
+
+    # 1. Сначала — ONVIF-устройства
+    for d in onvif_list or []:
+        ip = d.get("ip")
+        if not ip:
+            continue
+        by_ip[ip] = {
+            "ip": ip,
+            "endpoint": d.get("endpoint"),
+            "name": d.get("name") or "",
+            "hardware": d.get("hardware") or "",
+            "scopes": d.get("scopes") or [],
+            "xaddrs": d.get("xaddrs") or "",
+            "mac": "",
+            "serial": "",
+            "model": "",
+            "firmware": "",
+            "http_port": None,
+            "command_port": None,
+            "dhcp": None,
+            "activated": None,
+            "source": "onvif",
+        }
+
+    # 2. Затем — SADP-устройства (дополняют или добавляют)
+    for d in sadp_list or []:
+        ip = d.get("ip")
+        if not ip:
+            continue
+        if ip in by_ip:
+            # Найдено обоими — дополняем
+            by_ip[ip].update({
+                "mac": d.get("mac") or by_ip[ip].get("mac", ""),
+                "serial": d.get("serial") or by_ip[ip].get("serial", ""),
+                "model": d.get("model") or by_ip[ip].get("model", ""),
+                "firmware": d.get("firmware") or by_ip[ip].get("firmware", ""),
+                "http_port": d.get("http_port"),
+                "command_port": d.get("command_port"),
+                "dhcp": d.get("dhcp"),
+                "activated": d.get("activated"),
+                "source": "onvif+sadp",
+            })
+            # Если у ONVIF не было имени — берём модель из SADP
+            if not by_ip[ip].get("name") and d.get("model"):
+                by_ip[ip]["name"] = d["model"]
+        else:
+            # Только SADP — Hikvision с выключенным ONVIF или без него
+            http_port = d.get("http_port") or 80
+            if http_port == 80:
+                endpoint_guess = f"http://{ip}/onvif/device_service"
+            else:
+                endpoint_guess = (
+                    f"http://{ip}:{http_port}/onvif/device_service"
+                )
+            by_ip[ip] = {
+                "ip": ip,
+                "endpoint": endpoint_guess,  # best guess
+                "name": d.get("model") or "",
+                "hardware": "",
+                "scopes": [],
+                "xaddrs": "",
+                "mac": d.get("mac") or "",
+                "serial": d.get("serial") or "",
+                "model": d.get("model") or "",
+                "firmware": d.get("firmware") or "",
+                "http_port": d.get("http_port"),
+                "command_port": d.get("command_port"),
+                "dhcp": d.get("dhcp"),
+                "activated": d.get("activated"),
+                "source": "sadp",
+            }
+
+    return list(by_ip.values())
+
+
 @settings_bp.route("/api/onvif/discover", methods=["POST"])
 @admin_required
 def api_onvif_discover():
     """
-    Запускает WS-Discovery сканирование локальной сети.
-    Возвращает список найденных ONVIF-устройств.
+    Параллельное сканирование локальной сети:
+        * ONVIF WS-Discovery (multicast UDP 239.255.255.250:3702)
+        * SADP — Hikvision (multicast UDP 239.255.255.250:37020)
+
+    Возвращает объединённый список. Поле `source` у каждого устройства:
+        * "onvif"      — найдено только через ONVIF
+        * "sadp"       — найдено только через SADP (Hikvision)
+        * "onvif+sadp" — найдено обоими (совпал IP)
+
+    Время: ~timeout (параллельно, а не 2×timeout).
     """
+    import concurrent.futures as _cf
+
     payload = request.get_json(silent=True) or {}
     timeout = float(payload.get("timeout", 4.0))
     timeout = max(1.0, min(timeout, 15.0))
 
+    # --- Ленивая загрузка модулей с защитой от отсутствия ---
+    onvif_fn = None
+    sadp_fn = None
+
     try:
-        from onvif_client import discover_devices
-        devices = discover_devices(timeout=timeout)
+        from onvif_client import discover_devices as _discover_onvif
+        onvif_fn = _discover_onvif
     except Exception as e:
-        logger.exception("Ошибка ONVIF discovery")
-        return jsonify({"error": f"Ошибка сканирования: {e}"}), 500
+        logger.exception("ONVIF discovery недоступен: %s", e)
+
+    try:
+        from sadp_discovery import discover_sadp_devices as _discover_sadp
+        sadp_fn = _discover_sadp
+    except Exception as e:
+        logger.exception("SADP discovery недоступен: %s", e)
+
+    def _safe_run(fn):
+        if fn is None:
+            return []
+        try:
+            return fn(timeout=timeout)
+        except Exception as e:
+            logger.exception("Discovery: %s упал: %s", fn, e)
+            return []
+
+    onvif_devices: list = []
+    sadp_devices: list = []
+
+    with _cf.ThreadPoolExecutor(max_workers=2) as ex:
+        f_onvif = ex.submit(_safe_run, onvif_fn)
+        f_sadp = ex.submit(_safe_run, sadp_fn)
+        onvif_devices = f_onvif.result()
+        sadp_devices = f_sadp.result()
+
+    merged = _merge_discovery_results(onvif_devices, sadp_devices)
 
     return jsonify({
         "ok": True,
-        "count": len(devices),
-        "devices": devices,
+        "count": len(merged),
+        "by_source": {
+            "onvif": sum(1 for d in merged if d.get("source") == "onvif"),
+            "sadp": sum(1 for d in merged if d.get("source") == "sadp"),
+            "both": sum(1 for d in merged if d.get("source") == "onvif+sadp"),
+        },
+        "devices": merged,
     })
 
 
@@ -820,6 +1084,30 @@ def api_onvif_add_camera():
     if not re.fullmatch(r"[A-Za-z0-9_\-]+", cam_id):
         return jsonify({"error": "id может содержать только буквы, цифры, '_' и '-'"}), 400
 
+    # Режим записи: off / always / events.
+    # Логика 1-в-1 как в api_add_camera (см. _build_camera_cfg_from_payload).
+    record_mode = str(payload.get("record_mode") or "").strip()
+    if record_mode not in ("off", "always", "events"):
+        record_mode = "always" if payload.get("record") is True else "off"
+
+    try:
+        event_record_duration = int(payload.get("event_record_duration", 30))
+        if event_record_duration < 5:
+            event_record_duration = 5
+        if event_record_duration > 3600:
+            event_record_duration = 3600
+    except (TypeError, ValueError):
+        event_record_duration = 30
+
+    raw_topics = payload.get("event_topics")
+    if isinstance(raw_topics, list):
+        allowed = {"motion", "input", "tamper", "storage", "network"}
+        event_topics = [t for t in raw_topics if t in allowed]
+    else:
+        event_topics = ["motion", "input", "tamper"]
+    if not event_topics:
+        event_topics = ["motion"]
+
     new_cfg = {
         "id": cam_id,
         "name": name,
@@ -829,7 +1117,8 @@ def api_onvif_add_camera():
         "fps": int(payload.get("fps", 25)),
         "width": int(payload.get("width", 1280)),
         "height": int(payload.get("height", 720)),
-        "record": bool(payload.get("record", False)),
+        # record = (record_mode != "off") — согласовано с record_mode
+        "record": (record_mode != "off"),
         "archive_path": "",
         "record_mode": record_mode,
         "event_record_duration": event_record_duration,
@@ -885,6 +1174,8 @@ def api_onvif_add_camera():
     st["config"].setdefault("cameras", []).append(new_cfg)
     _save_config(st["config"], st["config_path"])
 
+    _attach_motion_detector(cam, new_cfg, replace=False)
+
     logger.info("ONVIF: добавлена камера %s (%s)", cam_id, rtsp_url)
 
     return jsonify({"ok": True, "camera": _camera_to_dict(cam)}), 201
@@ -911,7 +1202,7 @@ def api_ptz_info(camera_id: str):
         })
 
     # Логин/пароль для ONVIF — из URL камеры, если они там есть
-    from onvif_client import get_ptz_info, parse_rtsp_auth
+    from onvif_client import get_ptz_info
     # Если функция parse_rtsp_auth не найдена — берём логин/пароль из source
 
     # Извлекаем endpoint камеры из RTSP-URL
@@ -1147,6 +1438,11 @@ def _parse_rtsp_for_onvif(rtsp_url: str):
     """
     Разбирает RTSP-URL вида rtsp://user:pass@host:port/path
     и возвращает {host, port, user, password} или None.
+
+    Fallback для нестандартных URL (iSpy/AgentDVR), где креды
+    лежат внутри path, а не перед host:
+        rtsp://192.168.1.88:554/user=andrew_password=nS6VfUet_channel=0_...
+    В этом случае вытаскиваем user/password регуляркой из path.
     """
     if not rtsp_url:
         return None
@@ -1161,12 +1457,28 @@ def _parse_rtsp_for_onvif(rtsp_url: str):
     )
     if not m:
         return None
+
+    user = m.group("user") or ""
+    password = m.group("pass") or ""
+    path = m.group("path") or ""
+
+    # Fallback: iSpy-формат "user=..._password=..." внутри path.
+    # Сработает, только если в URL не было user:pass@ перед host.
+    if not user and not password and path:
+        m2 = re.search(r"user=([^_&]+)_password=([^_&]+)", path)
+        if m2:
+            user = m2.group(1)
+            password = m2.group(2)
+            logger.info(
+                "ONVIF: креды извлечены из iSpy-path: user='%s'", user,
+            )
+
     return {
-        "user": m.group("user") or "",
-        "password": m.group("pass") or "",
+        "user": user,
+        "password": password,
         "host": m.group("host") or "",
         "port": int(m.group("port")) if m.group("port") else 554,
-        "path": m.group("path") or "",
+        "path": path,
     }
 
 

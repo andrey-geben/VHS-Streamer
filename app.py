@@ -5,15 +5,21 @@ import logging
 import platform
 import sys
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from types import SimpleNamespace
-
+#
+import base64
+import hashlib
+import logging
+import secrets
+#
 import yaml
 from flask import (
     Flask, render_template, Response, abort,
     request, redirect, url_for, jsonify, g, session, send_from_directory,
+    current_app,
 )
 
 # ----------------------------------------------------------------------
@@ -113,12 +119,13 @@ from duplicator import StreamDuplicator
 import auth as auth_mod
 from settings_api import settings_bp
 from onvif_server import onvif_bp
-from streams_api import streams_bp
+from streams_api import streams_bp, _sync_mediamtx_auth
 from diagnostics import diagnostics_bp
 from mediamtx_manager import MediaMTXManager
 import mediamtx_manager as _mtx_helpers
 from preview import get_loopback_url, raw_path_name
 from events_manager import EventsManager
+from system_monitor import get_system_stats
 
 # ======================================================================
 #  Конфиг
@@ -144,6 +151,22 @@ streams_cfg = config.get("streams", [])
 _mediamtx_bin_name = "mediamtx.exe" if IS_WINDOWS else "mediamtx"
 _mediamtx_binary = bootstrap_get_path(_mediamtx_bin_name)
 _mediamtx_config = BASE_DIR / "mediamtx.yml"
+
+# ----------------------------------------------------------------------
+#  Синхронизация auth в mediamtx.yml — ДО mediamtx.start()
+# ----------------------------------------------------------------------
+#  Если файл оставлен от прошлого запуска в «битом» состоянии
+#  (например, authInternalUsers: [] — пустой список ЗАКРЫВАЕТ API),
+#  MediaMTX стартует с закрытым API, и все последующие
+#  mediamtx.add_path() получат 401 Unauthorized.
+#  Поэтому синхронизацию надо делать ДО старта.
+# ----------------------------------------------------------------------
+try:
+    _sync_mediamtx_auth(config, _mediamtx_config)
+except Exception as e:
+    logger.exception(
+        "Не удалось синхронизировать auth mediamtx.yml: %s", e,
+    )
 
 mediamtx: MediaMTXManager | None = None
 try:
@@ -224,13 +247,24 @@ if mediamtx:
             logger.error("Не удалось восстановить поток %s: %s",
                          stream_cfg.get("id"), e)
 
+
+# ======================================================================
+#  Камеры и рекордеры
+# ======================================================================
+cameras: dict[str, Camera] = {}
+recorders: dict[str, Recorder] = {}
+
+cameras: dict[str, Camera] = {}
+recorders: dict[str, Recorder] = {}
+
 # ======================================================================
 #  Менеджер ONVIF-событий
 # ======================================================================
-# Создаётся ДО камер и рекордеров, чтобы EventRecorder мог подписаться.
+#  Создаётся ПОСЛЕ cameras = {} (иначе лямбда не увидит имя) и ДО цикла
+#  камер — чтобы EventRecorder в этом цикле получил рабочий экземпляр.
+# ======================================================================
 events_manager: EventsManager | None = None
 try:
-    from events_manager import EventsManager
     events_manager = EventsManager(
         cameras_provider=lambda: cameras,
         poll_interval=2.0,
@@ -241,12 +275,6 @@ try:
 except Exception as e:
     logger.exception("Не удалось запустить EventsManager: %s", e)
     events_manager = None
-
-# ======================================================================
-#  Камеры и рекордеры
-# ======================================================================
-cameras: dict[str, Camera] = {}
-recorders: dict[str, Recorder] = {}
 
 for cam_cfg in cameras_cfg:
     try:
@@ -304,21 +332,59 @@ for cam_cfg in cameras_cfg:
         logger.exception("Не удалось инициализировать камеру %s: %s",
                          cam_cfg.get("id"), e)
 
-# ======================================================================
-#  Менеджер ONVIF-событий
-# ======================================================================
-events_manager: EventsManager | None = None
-try:
-    events_manager = EventsManager(
-        cameras_provider=lambda: cameras,
-        poll_interval=2.0,
-        subscription_ttl_min=10,
-    )
-    events_manager.start()
-    logger.info("EventsManager запущен (опрос каждые 2 сек)")
-except Exception as e:
-    logger.exception("Не удалось запустить EventsManager: %s", e)
-    events_manager = None
+        # ======================================================================
+        #  MotionDetector (OpenCV) — независимый от ONVIF способ узнавать о движении
+        # ======================================================================
+        #  Работает для любой камеры (IP, USB, аналог), потому что кадры всё
+        #  равно проходят через Camera._run() → Camera.subscribe().
+        #  События идут через EventsManager.ingest_event() — в тот же канал,
+        #  что и ONVIF-события: пишутся в /events и триггерят EventRecorder.
+        # ----------------------------------------------------------------------
+    motion_detector_mgr = None
+    _motion_cfg = config.get("motion_detection")
+    if _motion_cfg is None:
+        logger.info(
+            "MotionDetector: секция motion_detection отсутствует — выключен. "
+            "Добавьте её в config.yaml, чтобы включить."
+        )
+    elif isinstance(_motion_cfg, dict) and _motion_cfg.get("enabled", True) is False:
+        logger.info("MotionDetector: выключен в config.yaml (enabled: false)")
+    elif events_manager is None:
+        logger.warning(
+            "MotionDetector: EventsManager не запущен — выключен "
+            "(некому принимать события)"
+        )
+    else:
+        try:
+            from motion_detector import MotionDetectorManager
+
+            motion_detector_mgr = MotionDetectorManager(
+                _motion_cfg, events_manager.ingest_event
+            )
+            _attached = 0
+            for cam_id, cam in cameras.items():
+                cam_cfg = next(
+                    (c for c in cameras_cfg if c.get("id") == cam_id), {}
+                )
+                motion_detector_mgr.attach_camera(cam_id, cam_cfg)
+                cam.subscribe(
+                    lambda frame, cid=cam_id: motion_detector_mgr.process_frame(
+                        cid, frame
+                    )
+                )
+                _attached += 1
+            logger.info(
+                "MotionDetector: подключён к %d камерам (%s)",
+                _attached, ", ".join(cameras.keys()),
+            )
+        except Exception as e:
+            logger.exception("Не удалось запустить MotionDetector: %s", e)
+            motion_detector_mgr = None
+
+    # ======================================================================
+    #  Flask
+    # ======================================================================
+
 
 # ======================================================================
 #  Flask
@@ -338,12 +404,14 @@ app.config["RECORDERS"] = recorders
 app.config["VHS_CONFIG"] = config
 app.config["CONFIG_PATH"] = str(CONFIG_PATH)
 app.config["MEDIAMTX"] = mediamtx
+app.config["MEDIAMTX_CONFIG_PATH"] = str(_mediamtx_config)
 app.config["MEDIAMTX_HELPERS"] = {
     "build_raw_path_config": _mtx_helpers.build_raw_path_config,
     "build_stream_path_config": _mtx_helpers.build_stream_path_config,
 }
 app.config["EVENTS_MANAGER"] = events_manager
 app.config["LOOPBACK_URLS"] = loopback_urls
+app.config["MOTION_DETECTOR_MGR"] = motion_detector_mgr
 
 app.register_blueprint(settings_bp)
 app.register_blueprint(onvif_bp)
@@ -536,6 +604,137 @@ def archive_file(camera_id: str, date: str, filename: str):
     return send_from_directory(root, filename, as_attachment=False, conditional=True)
 
 
+@app.route("/api/archive/<camera_id>/timeline")
+@auth_mod.login_required
+def api_archive_timeline(camera_id: str):
+    """
+    Timeline архива для камеры на конкретную дату.
+
+    Query: ?date=YYYY-MM-DD (по умолчанию — сегодня)
+
+    Возвращает:
+        {
+          "ok": true,
+          "camera_id": "...",
+          "date": "2026-11-04",
+          "dates": ["2026-11-04", "2026-11-03", ...],   # все доступные даты
+          "segments": [
+            {
+              "file": "18-12-30.mp4",
+              "url": "/archive/.../18-12-30.mp4",
+              "start_ts": 1793785950.0,
+              "end_ts":   1793785980.0,
+              "size_mb":  12.3,
+            }
+          ],
+          "events": [ {ts, topic_short, severity, is_active, ...} ],
+          "archive_enabled": true/false,   # идёт ли запись СЕЙЧАС
+          "cam_record_mode": "events" | "always" | "off",
+        }
+    """
+    cam = cameras.get(camera_id)
+    if not cam:
+        return jsonify({"error": "camera not found"}), 404
+
+    date_str = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
+    try:
+        day_start = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "date должен быть YYYY-MM-DD"}), 400
+
+    day_start_ts = day_start.timestamp()
+    day_end_ts = day_start_ts + 86400
+
+    cam_root = archive_root() / camera_id
+    cam_day_dir = cam_root / date_str
+
+    # 1) Все даты, за которые есть папки (для календаря)
+    dates = []
+    if cam_root.is_dir():
+        try:
+            dates = sorted(
+                (d.name for d in cam_root.iterdir()
+                 if d.is_dir() and len(d.name) == 10),
+                reverse=True,
+            )
+        except Exception:
+            dates = []
+
+    # 2) Сегменты за день (из файлов *.mp4)
+    segments = []
+    if cam_day_dir.is_dir():
+        try:
+            files = sorted(cam_day_dir.glob("*.mp4"), key=lambda f: f.name)
+        except Exception:
+            files = []
+
+        for f in files:
+            # Имя файла: "HH-MM-SS.mp4" или "HH-MM-SS_N.mp4"
+            # первые 8 символов — время
+            try:
+                hhmmss = f.stem[:8].replace("-", ":")
+                seg_start = datetime.strptime(
+                    f"{date_str} {hhmmss}", "%Y-%m-%d %H:%M:%S"
+                ).timestamp()
+            except (ValueError, IndexError):
+                continue
+
+            try:
+                st = f.stat()
+                mtime = st.st_mtime
+                size_mb = round(st.st_size / (1024 * 1024), 2)
+            except Exception:
+                mtime = seg_start
+                size_mb = 0
+
+            segments.append({
+                "file": f.name,
+                "url": f"/archive/{camera_id}/{date_str}/{f.name}",
+                "start_ts": seg_start,
+                "end_ts": mtime,   # эвристика: mtime ≈ момент закрытия файла
+                "size_mb": size_mb,
+            })
+
+    # 3) Корректируем end_ts: не больше начала следующего сегмента
+    for i in range(len(segments) - 1):
+        if segments[i]["end_ts"] > segments[i + 1]["start_ts"]:
+            segments[i]["end_ts"] = segments[i + 1]["start_ts"]
+
+    # 4) События за день (маркеры на timeline)
+    events_data = []
+    em = current_app.config.get("EVENTS_MANAGER")
+    if em:
+        try:
+            events_data = em.db.query(
+                camera_id=camera_id,
+                since_ts=day_start_ts,
+                until_ts=day_end_ts,
+                limit=10000,
+            )
+        except Exception as e:
+            logger.warning("[%s] Ошибка чтения событий: %s", camera_id, e)
+
+    # 5) Флаг «идёт ли запись сейчас» (для предупреждения в модалке)
+    archive_cfg = config.get("archive", {})
+    archive_on = (
+        archive_cfg.get("enabled", False)
+        and archive_cfg.get("record_all", True)
+    )
+    cam_mode = getattr(cam, "record_mode", "off") or "off"
+    archive_enabled = archive_on and cam_mode != "off"
+
+    return jsonify({
+        "ok": True,
+        "camera_id": camera_id,
+        "date": date_str,
+        "dates": dates,
+        "segments": segments,
+        "events": events_data,
+        "archive_enabled": archive_enabled,
+        "cam_record_mode": cam_mode,
+    })
+
+
 # ======================================================================
 #  API: статус
 # ======================================================================
@@ -559,6 +758,29 @@ def api_status():
 
 
 # ======================================================================
+#  API: системный мониторинг (CPU / RAM / диски / GPU)
+# ======================================================================
+@app.route("/api/system/stats")
+@auth_mod.login_required
+def api_system_stats():
+    """
+    Возвращает текущие метрики системы:
+        cpu:   {percent, cores_logical, cores_physical, freq_mhz}
+        ram:   {total_mb, used_mb, available_mb, percent}
+        disks: [{mount, label, fstype, total_gb, used_gb, free_gb, percent}]
+        gpu:   [{name, vram_mb, utilization_percent}]
+        gpu_ready: bool     (фоновый поток уже отработал)
+        gpu_error: str|None
+        platform: "Windows" / "Linux" / "Darwin"
+        ts: float
+
+    GPU-данные из кэша (фоновый поток обновляет каждые 5 сек),
+    поэтому вызов мгновенный и не блокирует Flask.
+    """
+    return jsonify(get_system_stats())
+
+
+# ======================================================================
 #  Запуск
 # ======================================================================
 if __name__ == "__main__":
@@ -574,6 +796,22 @@ if __name__ == "__main__":
     host = server_cfg.get("host", "0.0.0.0")
     port = int(server_cfg.get("port", 8000))
     logger.info("Основной сервер: http://%s:%s", host, port)
+
+    # Warm-up системного мониторинга: запускает фоновый поток GPU,
+    # чтобы к первому запросу /api/system/stats данные уже были готовы.
+    # Сам вызов возвращает CPU/RAM/диски, GPU появится через 3–7 сек.
+    try:
+        _warm = get_system_stats()
+        logger.info(
+            "system_monitor: warm-up OK (cpu=%.0f%%, ram=%.0f%%, "
+            "дисков=%d, GPU готов: %s)",
+            _warm["cpu"]["percent"] or 0,
+            _warm["ram"]["percent"] or 0,
+            len(_warm["disks"]),
+            _warm["gpu_ready"],
+        )
+    except Exception:
+        logger.exception("system_monitor: warm-up упал (не критично)")
     logger.info("Архив: %s", archive_root())
     if loopback_urls:
         logger.info("Loopback-камеры: %s", list(loopback_urls.keys()))
@@ -642,6 +880,8 @@ if __name__ == "__main__":
                 pass
 
         # 3. Камеры (читают raw-потоки)
+        # MotionDetector не имеет своего потока — он синхронный,
+        # снимать подписку не нужно: вместе с камерой умирает и callback.
         for cam in cameras.values():
             try:
                 cam.stop()

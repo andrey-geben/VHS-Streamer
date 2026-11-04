@@ -20,6 +20,30 @@
     </div>
 </div>
 
+<!-- ============= СИСТЕМНЫЙ МОНИТОРИНГ ============= -->
+<div class="mon-grid" id="mon-grid">
+    <div class="mon-card">
+        <div class="mon-title">CPU</div>
+        <div class="mon-big" id="mon-cpu-val">—</div>
+        <div class="mon-bar"><div class="mon-bar-fill" id="mon-cpu-bar" style="width:0%"></div></div>
+        <div class="mon-sub" id="mon-cpu-sub">—</div>
+    </div>
+    <div class="mon-card">
+        <div class="mon-title">RAM</div>
+        <div class="mon-big" id="mon-ram-val">—</div>
+        <div class="mon-bar"><div class="mon-bar-fill" id="mon-ram-bar" style="width:0%"></div></div>
+        <div class="mon-sub" id="mon-ram-sub">—</div>
+    </div>
+    <div class="mon-card">
+        <div class="mon-title">Диски</div>
+        <div id="mon-disks-list" class="mon-list">—</div>
+    </div>
+    <div class="mon-card">
+        <div class="mon-title">GPU</div>
+        <div id="mon-gpu-list" class="mon-list">—</div>
+    </div>
+</div>
+
 <div class="cam-grid">
     {% for cam in cameras %}
     {% set st = cam.get_status() %}
@@ -40,14 +64,17 @@
                             onclick="togglePtzPanel('{{ cam.id }}')"
                             title="PTZ-управление">🎮</button>
                 {% endif %}
+                <button class="cam-archive-btn" type="button"
+                        onclick='openArchiveModal({{ cam.id|tojson }}, {{ cam.name|tojson }})'
+                        title="Архив записей">📼</button>
                 <button class="cam-fs-btn"
-                        onclick="openFullscreen('{{ cam.id }}', '{{ cam.name|e }}')"
+                        onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
                         title="Полный экран">⛶</button>
             </div>
         </div>
 
         <div class="cam-preview"
-             onclick="openFullscreen('{{ cam.id }}', '{{ cam.name|e }}')"
+             onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
              title="Клик — полный экран">
             <iframe class="cam-iframe"
                     src="http://{{ request.host.split(':')[0] }}:8889/__raw_{{ cam.id }}/"
@@ -140,12 +167,165 @@
     </div>
 </div>
 
+<!-- ============= МОДАЛКА АРХИВА ============= -->
+<div id="archive-modal">
+    <div class="am-panel">
+        <div class="am-header">
+            <h3 style="margin:0">📼 Архив: <span id="am-camera-name"></span></h3>
+            <button class="am-btn" onclick="closeArchiveModal()">✕</button>
+        </div>
+        <div class="am-body">
+            <div class="am-datebar">
+                <button class="am-btn" onclick="archiveNavDay(-1)" title="Предыдущий день">◀</button>
+                <input type="date" id="am-date" onchange="loadArchiveTimeline()">
+                <button class="am-btn" onclick="archiveNavDay(1)" title="Следующий день">▶</button>
+                <button class="am-btn" onclick="archiveToday()">Сегодня</button>
+                <span id="am-status" class="muted" style="margin-left:auto; font-size:0.85em"></span>
+            </div>
+
+            <div id="am-warning" style="display:none; color:#f5b944;
+                 background:#2a221a; border:1px solid #4a3a2a;
+                 border-radius:4px; padding:8px 12px;
+                 margin-bottom:12px; font-size:0.88em;"></div>
+
+            <div class="am-layout">
+                <!-- Левая колонка: canvas + player + кнопки -->
+                <div class="am-left">
+                    <canvas id="am-timeline" height="60"></canvas>
+                    <div class="muted" id="am-hover-time"
+                         style="font-size:0.8em; height:16px"></div>
+
+                    <div class="am-player" id="am-player-block" style="display:none">
+                        <video id="am-video" controls preload="metadata"></video>
+                        <div class="muted" id="am-video-info"
+                             style="font-size:0.82em; margin-top:4px"></div>
+                        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">
+                            <button class="am-btn" onclick="playPrevSeg()"
+                                    title="Предыдущий сегмент">⏮</button>
+                            <button class="am-btn" onclick="playAllFromStart()"
+                                    title="Играть с первого сегмента подряд">▶ Всё</button>
+                            <button class="am-btn" onclick="playNextSeg()"
+                                    title="Следующий сегмент">⏭</button>
+                            <label style="margin-left:auto; display:flex; align-items:center;
+                                          gap:6px; font-size:0.82em; color:#8b96a5">
+                                <input type="checkbox" id="am-autoadvance" checked>
+                                авто
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Правая колонка: legend + chips (вертикальный скролл) -->
+                <div class="am-right">
+                    <div style="display:flex; align-items:center; gap:6px;
+                                margin-bottom:4px; flex-shrink:0">
+                        <span style="font-size:0.85em; color:#8b96a5">
+                            События (<span id="am-ev-count">0</span>)
+                        </span>
+                    </div>
+                    <div class="am-legend" id="am-events-legend"></div>
+                    <div class="am-chips-grid" id="am-events-chips"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
     .cam-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
         gap: 12px;
     }
+
+    /* ============= Системный мониторинг ============= */
+    .mon-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    @media (max-width: 1100px) {
+        .mon-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+        .mon-grid { grid-template-columns: 1fr; }
+    }
+    .mon-card {
+        background: #1e2126;
+        border: 1px solid #2a2f37;
+        border-radius: 8px;
+        padding: 10px 14px;
+        min-height: 88px;
+    }
+    .mon-title {
+        font-size: 0.72em;
+        color: #8b96a5;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        margin-bottom: 4px;
+    }
+    .mon-big {
+        font-size: 1.6em;
+        font-weight: 600;
+        color: #e8e8e8;
+        line-height: 1.1;
+        margin-bottom: 6px;
+        font-variant-numeric: tabular-nums;
+    }
+    .mon-bar {
+        height: 6px;
+        background: #14161a;
+        border-radius: 3px;
+        overflow: hidden;
+    }
+    .mon-bar-fill {
+        height: 100%;
+        background: #57d87a;
+        border-radius: 3px;
+        transition: width 0.4s ease, background 0.3s ease;
+    }
+    .mon-sub {
+        font-size: 0.76em;
+        color: #8b96a5;
+        margin-top: 5px;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.3;
+    }
+    .mon-list {
+        font-size: 0.82em;
+        line-height: 1.35;
+    }
+    .mon-list-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 1px 0;
+        font-variant-numeric: tabular-nums;
+    }
+    .mon-list-item .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #cfd6e0;
+    }
+    .mon-list-item .val {
+        flex-shrink: 0;
+        font-weight: 600;
+    }
+    .mon-mini-bar {
+        height: 3px;
+        background: #14161a;
+        border-radius: 2px;
+        overflow: hidden;
+        margin: 2px 0 4px;
+    }
+    .mon-mini-bar > div {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.4s ease;
+    }
+
     .cam-card {
         background: #1e2126;
         border: 1px solid #2a2f37;
@@ -345,10 +525,221 @@
     .fs-ptz-panel .ptz-header {
         font-size: 0.9em;
     }
+
+    /* Кнопка «Архив» в шапке карточки */
+    .cam-archive-btn {
+        background: transparent;
+        border: 1px solid #2a2f37;
+        color: #f5b944;
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-size: 0.9em;
+        cursor: pointer;
+        line-height: 1.2;
+    }
+    .cam-archive-btn:hover {
+        background: #2a2f37;
+        color: #fff;
+    }
+
+    /* Модалка архива */
+    #archive-modal {
+        display: none;
+        position: fixed; inset: 0;
+        background: rgba(0, 0, 0, 0.75);
+        z-index: 600;
+        align-items: center;
+        justify-content: center;
+    }
+    #archive-modal .am-panel {
+        background: #1e2126;
+        border: 1px solid #2a2f37;
+        border-radius: 10px;
+        width: 1150px; max-width: 98vw;
+        max-height: 92vh;
+        display: flex; flex-direction: column;
+        overflow: hidden;
+    }
+    #archive-modal .am-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 20px;
+        border-bottom: 1px solid #2a2f37;
+        flex-shrink: 0;
+    }
+    #archive-modal .am-body {
+        padding: 14px 20px;
+        overflow: hidden;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+    #archive-modal .am-datebar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+        flex-shrink: 0;
+    }
+    #archive-modal .am-datebar input[type=date] {
+        background: #14161a;
+        color: #e8e8e8;
+        border: 1px solid #2a2f37;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 0.95em;
+    }
+    #archive-modal .am-btn {
+        background: #2a2f37;
+        color: #e8e8e8;
+        border: 1px solid #3a4150;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 0.9em;
+        cursor: pointer;
+    }
+    #archive-modal .am-btn:hover { background: #3a4150; }
+    #archive-modal #am-timeline {
+        display: block;
+        width: 100%;
+        height: 60px;
+        border-radius: 4px;
+        background: #14161a;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+    #archive-modal .am-player video {
+        width: 100%;
+        max-height: 55vh;
+        background: #000;
+        border-radius: 4px;
+        display: block;
+    }
+
+    /* Компоновка: слева видео+canvas, справа chips */
+    #archive-modal .am-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 14px;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+    }
+    #archive-modal .am-left {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+    #archive-modal .am-right {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-height: 0;
+        min-width: 0;
+        overflow: hidden;
+        background: #14161a;
+        border: 1px solid #2a2f37;
+        border-radius: 6px;
+        padding: 8px 8px 8px 10px;
+    }
+    @media (max-width: 900px) {
+        #archive-modal .am-layout {
+            grid-template-columns: 1fr;
+            max-height: none;
+        }
+        #archive-modal .am-right {
+            max-height: 200px;
+        }
+    }
+
+    /* Легенда событий (в правой колонке) */
+    #archive-modal .am-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 10px;
+        margin-bottom: 6px;
+        font-size: 0.72em;
+        flex-shrink: 0;
+    }
+    #archive-modal .am-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: #8b96a5;
+        white-space: nowrap;
+    }
+    #archive-modal .am-legend-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        flex-shrink: 0;
+    }
+
+    /* Вертикальные chips событий — grid с вертикальным скроллом */
+    #archive-modal .am-chips-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+        gap: 4px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 2px 2px 2px 0;
+        scrollbar-width: thin;
+        scrollbar-color: #3a4150 transparent;
+    }
+    #archive-modal .am-chips-grid::-webkit-scrollbar {
+        width: 6px;
+    }
+    #archive-modal .am-chips-grid::-webkit-scrollbar-thumb {
+        background: #3a4150;
+        border-radius: 3px;
+    }
+    #archive-modal .am-chip-v {
+        background: #1a1c20;
+        border: 1px solid #2a2f37;
+        border-left: 3px solid #8b96a5;
+        border-radius: 4px;
+        padding: 5px 3px;
+        text-align: center;
+        cursor: pointer;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.15;
+        transition: background 0.1s, transform 0.05s;
+        user-select: none;
+    }
+    #archive-modal .am-chip-v:hover {
+        background: #2a2f37;
+    }
+    #archive-modal .am-chip-v:active {
+        transform: scale(0.97);
+    }
+    #archive-modal .am-chip-v.active {
+        background: #2a6df4;
+        border-color: #4da3ff;
+    }
+    #archive-modal .am-chip-v .t1 {
+        display: block;
+        font-size: 0.82em;
+        color: #e8e8e8;
+        font-weight: 500;
+    }
+    #archive-modal .am-chip-v .t2 {
+        display: block;
+        font-size: 0.7em;
+        color: #8b96a5;
+    }
+    #archive-modal .am-chip-v.active .t1 { color: #fff; }
+    #archive-modal .am-chip-v.active .t2 { color: rgba(255,255,255,0.8); }
 </style>
 
 <script>
-    const SERVER_HOST = window.location.hostname;
+const SERVER_HOST = window.location.hostname;
 const WEBRTC_PORT = 8889;
 
 let _ptzCapabilities = {};
@@ -568,10 +959,596 @@ async function ptzHome(cameraId) {
 }
 
 // =====================================================================
+// АРХИВ
+// =====================================================================
+let _archiveCameraId = null;
+let _archiveCameraName = null;
+let _archiveData = null;
+let _archiveSelectedSeg = null;
+let _archivePlayheadTs = null;
+
+function _fmtTime(ts) {
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString('ru-RU', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+}
+
+function escapeHtmlHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+// ----------------------------------------------------------------------
+// Группы событий: цвета, подписи, определение по topic.
+// Соответствует events_manager.TOPIC_GROUPS (eventGroup ≈ _topic_group).
+// ----------------------------------------------------------------------
+const EVENT_COLORS = {
+    motion:  '#57d87a',
+    input:   '#f16a6a',
+    tamper:  '#f5b944',
+    storage: '#e0c341',
+    network: '#4da3ff',
+    scene:   '#a78bfa',
+    image:   '#8b96a5',
+    other:   '#8b96a5',
+};
+const EVENT_LABELS = {
+    motion:  'Движение',
+    input:   'Тревожный вход',
+    tamper:  'Вскрытие корпуса',
+    storage: 'Сбой носителя',
+    network: 'Потеря сети',
+    scene:   'Смена сцены',
+    image:   'Качество кадра',
+    other:   'Прочее',
+};
+const EVENT_ORDER = ['motion', 'input', 'tamper', 'storage',
+                     'network', 'scene', 'image', 'other'];
+
+function eventGroup(ev) {
+    const t = (ev.topic || '').toLowerCase();
+    if (t.includes('motionalarm') || t.includes('cellmotiondetector') ||
+        t.includes('fielddetector') || t.includes('linedetector') ||
+        t.includes('loitering')) return 'motion';
+    if (t.includes('digitalinput')) return 'input';
+    if (t.includes('storagefailure')) return 'storage';
+    if (t.includes('tamperdetector')) return 'tamper';
+    if (t.includes('networklost')) return 'network';
+    if (t.includes('globalscenechange')) return 'scene';
+    if (t.includes('imagetooblurry') || t.includes('imagetoodark')) return 'image';
+    return 'other';
+}
+
+function openArchiveModal(cameraId, cameraName) {
+    _archiveCameraId = cameraId;
+    _archiveCameraName = cameraName || cameraId;
+    _archiveData = null;
+    _archiveSelectedSeg = null;
+    _archivePlayheadTs = null;
+
+    document.getElementById('am-camera-name').textContent = _archiveCameraName;
+
+    const v = document.getElementById('am-video');
+    try { v.pause(); } catch (e) {}
+    v.removeAttribute('src');
+    v.load();
+    document.getElementById('am-player-block').style.display = 'none';
+    document.getElementById('am-video-info').textContent = '';
+    document.getElementById('am-hover-time').textContent = '';
+
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' +
+        String(today.getMonth() + 1).padStart(2, '0') + '-' +
+        String(today.getDate()).padStart(2, '0');
+    document.getElementById('am-date').value = ymd;
+
+    document.getElementById('archive-modal').style.display = 'flex';
+    loadArchiveTimeline();
+}
+
+function closeArchiveModal() {
+    const v = document.getElementById('am-video');
+    try { v.pause(); } catch (e) {}
+    v.removeAttribute('src');
+    v.load();
+    document.getElementById('archive-modal').style.display = 'none';
+    _archiveCameraId = null;
+    _archiveCameraName = null;
+    _archiveData = null;
+    _archiveSelectedSeg = null;
+    _archivePlayheadTs = null;
+}
+
+function archiveNavDay(delta) {
+    const inp = document.getElementById('am-date');
+    if (!inp.value) return;
+    const d = new Date(inp.value + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    inp.value = d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0');
+    loadArchiveTimeline();
+}
+
+function archiveToday() {
+    const today = new Date();
+    document.getElementById('am-date').value =
+        today.getFullYear() + '-' +
+        String(today.getMonth() + 1).padStart(2, '0') + '-' +
+        String(today.getDate()).padStart(2, '0');
+    loadArchiveTimeline();
+}
+
+async function loadArchiveTimeline() {
+    if (!_archiveCameraId) return;
+    const dateStr = document.getElementById('am-date').value;
+    if (!dateStr) return;
+
+    const status = document.getElementById('am-status');
+    status.textContent = 'загрузка...';
+
+    try {
+        const r = await fetch('/api/archive/' +
+            encodeURIComponent(_archiveCameraId) +
+            '/timeline?date=' + encodeURIComponent(dateStr));
+        if (!r.ok) {
+            status.textContent = 'ошибка ' + r.status;
+            return;
+        }
+        const data = await r.json();
+        _archiveData = data;
+        _archiveSelectedSeg = null;
+        _archivePlayheadTs = null;
+
+        const v = document.getElementById('am-video');
+        try { v.pause(); } catch (e) {}
+        v.removeAttribute('src');
+        v.load();
+        document.getElementById('am-player-block').style.display = 'none';
+        document.getElementById('am-video-info').textContent = '';
+
+        const warn = document.getElementById('am-warning');
+        if (!data.archive_enabled) {
+            warn.style.display = 'block';
+            warn.innerHTML = '⚠️ Архив <b>сейчас не пишется</b> ' +
+                '(mode: <code>' + escapeHtmlHtml(data.cam_record_mode) + '</code>). ' +
+                'Показаны только ранее записанные файлы, если есть.';
+        } else {
+            warn.style.display = 'none';
+        }
+
+        const segCount = (data.segments || []).length;
+        const evCount = (data.events || []).length;
+        document.getElementById('am-ev-count').textContent = evCount;
+
+        status.textContent = segCount === 0
+            ? 'нет записей за ' + data.date
+            : segCount + ' сегментов, ' + evCount + ' событий';
+
+        setTimeout(renderTimeline, 0);
+        renderEventsChips();
+    } catch (e) {
+        status.textContent = 'ошибка: ' + e.message;
+    }
+}
+
+function renderTimeline() {
+    const canvas = document.getElementById('am-timeline');
+    if (!canvas) return;
+
+    const W = canvas.clientWidth || 800;
+    canvas.width = W;
+    const H = 60;
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#14161a';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = '#2a2f37';
+    ctx.fillStyle = '#8b96a5';
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'top';
+    for (let h = 0; h <= 24; h += 3) {
+        const x = (h / 24) * W;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+        const label = h + ':00';
+        if (h < 24) ctx.fillText(label, x + 2, H - 12);
+    }
+
+    if (!_archiveData) return;
+
+    const dayStart = new Date(_archiveData.date + 'T00:00:00').getTime() / 1000;
+    const total = 86400;
+
+    // Сегменты
+    for (const seg of (_archiveData.segments || [])) {
+        const x1 = ((seg.start_ts - dayStart) / total) * W;
+        const x2 = ((seg.end_ts - dayStart) / total) * W;
+        const w = Math.max(1, x2 - x1);
+        const isActive = _archiveSelectedSeg &&
+            _archiveSelectedSeg.file === seg.file;
+        ctx.fillStyle = isActive ? '#8effa8' : '#57d87a';
+        ctx.fillRect(x1, H / 3, w, (H * 2) / 3);
+        if (isActive) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x1 + 0.5, H / 3 + 0.5, w - 1, (H * 2) / 3 - 1);
+        }
+    }
+
+    // События — цветные штрихи по типу (соответствие легенде)
+    for (const ev of (_archiveData.events || [])) {
+        const x = ((ev.ts - dayStart) / total) * W;
+        const g = eventGroup(ev);
+        ctx.fillStyle = EVENT_COLORS[g] || EVENT_COLORS.other;
+        ctx.fillRect(x - 1, 0, 2, H / 3);
+    }
+
+    // Playhead
+    if (_archivePlayheadTs != null) {
+        const xp = ((_archivePlayheadTs - dayStart) / total) * W;
+        if (xp >= 0 && xp <= W) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(xp - 1.5, 0, 3, H);
+            ctx.beginPath();
+            ctx.moveTo(xp - 4, 0);
+            ctx.lineTo(xp + 4, 0);
+            ctx.lineTo(xp, 5);
+            ctx.closePath();
+            ctx.fill();
+        }
+    }
+}
+
+function renderEventsChips() {
+    const legendBox = document.getElementById('am-events-legend');
+    const chipsBox = document.getElementById('am-events-chips');
+    if (!legendBox || !chipsBox) return;
+    legendBox.innerHTML = '';
+    chipsBox.innerHTML = '';
+
+    const evs = (_archiveData && _archiveData.events) || [];
+    if (evs.length === 0) {
+        chipsBox.innerHTML = '<span class="muted" style="font-size:0.85em; ' +
+            'padding:6px 0">нет событий за эту дату</span>';
+        return;
+    }
+
+    // Легенда — только группы, которые есть в текущих событиях
+    const present = new Set();
+    evs.forEach(ev => present.add(eventGroup(ev)));
+    EVENT_ORDER.forEach(g => {
+        if (!present.has(g)) return;
+        const item = document.createElement('span');
+        item.className = 'am-legend-item';
+        item.innerHTML =
+            '<span class="am-legend-dot" style="background:' +
+                EVENT_COLORS[g] + '"></span>' + EVENT_LABELS[g];
+        legendBox.appendChild(item);
+    });
+
+    // Chips — вертикальные, только время, цвет = тип события
+    evs.forEach((ev, i) => {
+        const g = eventGroup(ev);
+        const color = EVENT_COLORS[g] || EVENT_COLORS.other;
+        const chip = document.createElement('div');
+        chip.className = 'am-chip-v';
+        chip.dataset.evIdx = i;
+        chip.style.borderLeftColor = color;
+
+        const d = new Date(ev.ts * 1000);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        chip.innerHTML =
+            '<span class="t1">' + hh + ':' + mm + '</span>' +
+            '<span class="t2">:' + ss + '</span>';
+        chip.title = EVENT_LABELS[g] + ' · ' +
+            hh + ':' + mm + ':' + ss +
+            (ev.severity ? ' · ' + ev.severity : '');
+        chip.onclick = () => jumpToEvent(i);
+        chipsBox.appendChild(chip);
+    });
+}
+
+function _findCurrentSegIdx() {
+    if (!_archiveData || !_archiveSelectedSeg) return -1;
+    const segs = _archiveData.segments || [];
+    return segs.findIndex(s => s.file === _archiveSelectedSeg.file);
+}
+
+function playSegment(seg, seekToTs) {
+    const video = document.getElementById('am-video');
+    document.getElementById('am-player-block').style.display = 'block';
+    video.src = seg.url;
+    video.load();
+
+    video.onloadedmetadata = () => {
+        if (seekToTs != null) {
+            const offset = Math.max(0, seekToTs - seg.start_ts);
+            if (offset < (video.duration || 0)) {
+                video.currentTime = offset;
+            }
+        }
+        video.play().catch(() => {});
+    };
+
+    video.onended = () => {
+        const auto = document.getElementById('am-autoadvance');
+        if (auto && !auto.checked) return;
+        playNextSeg();
+    };
+
+    video.ontimeupdate = () => {
+        _archivePlayheadTs = seg.start_ts + (video.currentTime || 0);
+        renderTimeline();
+    };
+
+    document.getElementById('am-video-info').textContent =
+        seg.file + ' · ' + seg.size_mb + ' МБ · ' +
+        _fmtTime(seg.start_ts) + ' — ' + _fmtTime(seg.end_ts);
+    _archiveSelectedSeg = seg;
+    _archivePlayheadTs = seg.start_ts;
+    renderTimeline();
+}
+
+function playNextSeg() {
+    if (!_archiveData) return;
+    const segs = _archiveData.segments || [];
+    if (segs.length === 0) return;
+    const idx = _findCurrentSegIdx();
+    const next = idx + 1;
+    if (next >= segs.length) return;
+    playSegment(segs[next], null);
+}
+
+function playPrevSeg() {
+    if (!_archiveData) return;
+    const segs = _archiveData.segments || [];
+    if (segs.length === 0) return;
+    const idx = _findCurrentSegIdx();
+    const prev = idx - 1;
+    if (prev < 0) return;
+    playSegment(segs[prev], null);
+}
+
+function playAllFromStart() {
+    if (!_archiveData) return;
+    const segs = _archiveData.segments || [];
+    if (segs.length === 0) {
+        alert('Нет сегментов за эту дату');
+        return;
+    }
+    playSegment(segs[0], null);
+}
+
+function jumpToEvent(evIdx) {
+    if (!_archiveData) return;
+    const ev = (_archiveData.events || [])[evIdx];
+    if (!ev) return;
+
+    let seg = null;
+    for (const s of (_archiveData.segments || [])) {
+        if (s.start_ts <= ev.ts && ev.ts < s.end_ts) { seg = s; break; }
+    }
+    if (!seg) {
+        let bestDist = Infinity;
+        for (const s of (_archiveData.segments || [])) {
+            const d = Math.min(
+                Math.abs(ev.ts - s.start_ts),
+                Math.abs(ev.ts - s.end_ts)
+            );
+            if (d < bestDist) { bestDist = d; seg = s; }
+        }
+    }
+    if (!seg) {
+        alert('Нет сегмента рядом с событием');
+        return;
+    }
+
+    document.querySelectorAll('#am-events-chips .am-chip-v')
+        .forEach(e => e.classList.remove('active'));
+    const chip = document.querySelector(
+        '#am-events-chips .am-chip-v[data-ev-idx="' + evIdx + '"]');
+    if (chip) {
+        chip.classList.add('active');
+        chip.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
+
+    playSegment(seg, ev.ts);
+}
+
+// Canvas: клик и hover + resize
+document.addEventListener('DOMContentLoaded', function() {
+    const canvas = document.getElementById('am-timeline');
+    if (!canvas) return;
+
+    function xToTs(clientX) {
+        const rect = canvas.getBoundingClientRect();
+        const relX = Math.max(0, Math.min(canvas.width, clientX - rect.left));
+        const dayStart = new Date(_archiveData.date + 'T00:00:00').getTime() / 1000;
+        return dayStart + (relX / canvas.width) * 86400;
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!_archiveData) return;
+        const ts = xToTs(e.clientX);
+        document.getElementById('am-hover-time').textContent = _fmtTime(ts);
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        document.getElementById('am-hover-time').textContent = '';
+    });
+
+    canvas.addEventListener('click', (e) => {
+        if (!_archiveData) return;
+        const ts = xToTs(e.clientX);
+        let seg = null;
+        for (const s of (_archiveData.segments || [])) {
+            if (s.start_ts <= ts && ts < s.end_ts) { seg = s; break; }
+        }
+        if (seg) playSegment(seg, ts);
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const m = document.getElementById('archive-modal');
+            if (m && m.style.display !== 'none') {
+                closeArchiveModal();
+            }
+        }
+    });
+
+    // При изменении размера окна — перерисовать canvas
+    let _rtResizeTimer = null;
+    window.addEventListener('resize', function() {
+        if (!_archiveData) return;
+        clearTimeout(_rtResizeTimer);
+        _rtResizeTimer = setTimeout(() => {
+            const m = document.getElementById('archive-modal');
+            if (m && m.style.display !== 'none') {
+                renderTimeline();
+            }
+        }, 150);
+    });
+});
+
+// =====================================================================
+// СИСТЕМНЫЙ МОНИТОРИНГ (CPU / RAM / диски / GPU)
+// =====================================================================
+function _monColor(pct) {
+    if (pct == null) return '#8b96a5';
+    if (pct >= 90) return '#f16a6a';
+    if (pct >= 70) return '#f5b944';
+    return '#57d87a';
+}
+
+function _monEscape(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+async function refreshSystemStats() {
+    try {
+        const r = await fetch('/api/system/stats');
+        if (!r.ok) return;
+        const d = await r.json();
+
+        // --- CPU ---
+        const cpuPct = d.cpu && d.cpu.percent;
+        const cpuVal = document.getElementById('mon-cpu-val');
+        const cpuBar = document.getElementById('mon-cpu-bar');
+        const cpuSub = document.getElementById('mon-cpu-sub');
+        if (cpuVal) {
+            cpuVal.textContent = (cpuPct == null) ? '—' :
+                Math.round(cpuPct) + '%';
+        }
+        if (cpuBar) {
+            cpuBar.style.width = Math.max(0, Math.min(100, cpuPct || 0)) + '%';
+            cpuBar.style.background = _monColor(cpuPct);
+        }
+        if (cpuSub && d.cpu) {
+            const parts = [];
+            if (d.cpu.cores_logical) {
+                parts.push(d.cpu.cores_logical + ' ядер');
+            }
+            if (d.cpu.freq_mhz) {
+                parts.push(d.cpu.freq_mhz + ' МГц');
+            }
+            cpuSub.textContent = parts.join(' · ') || '—';
+        }
+
+        // --- RAM ---
+        const ramPct = d.ram && d.ram.percent;
+        const ramVal = document.getElementById('mon-ram-val');
+        const ramBar = document.getElementById('mon-ram-bar');
+        const ramSub = document.getElementById('mon-ram-sub');
+        if (ramVal) {
+            ramVal.textContent = (ramPct == null) ? '—' :
+                Math.round(ramPct) + '%';
+        }
+        if (ramBar) {
+            ramBar.style.width = Math.max(0, Math.min(100, ramPct || 0)) + '%';
+            ramBar.style.background = _monColor(ramPct);
+        }
+        if (ramSub && d.ram) {
+            const usedGb = (d.ram.used_mb || 0) / 1024;
+            const totalGb = (d.ram.total_mb || 0) / 1024;
+            ramSub.textContent = usedGb.toFixed(1) + ' / ' +
+                totalGb.toFixed(1) + ' ГБ';
+        }
+
+        // --- Диски ---
+        const disksBox = document.getElementById('mon-disks-list');
+        if (disksBox) {
+            if (d.disks && d.disks.length > 0) {
+                disksBox.innerHTML = d.disks.map(dk => {
+                    const c = _monColor(dk.percent);
+                    const label = _monEscape(dk.label || dk.mount || '?');
+                    const pct = (dk.percent == null) ? 0 : dk.percent;
+                    return '<div class="mon-list-item">' +
+                        '<span class="name" title="' + label + '">' + label + '</span>' +
+                        '<span class="val" style="color:' + c + '">' +
+                            Math.round(pct) + '%</span>' +
+                        '</div>' +
+                        '<div class="mon-mini-bar"><div style="width:' +
+                            Math.max(0, Math.min(100, pct)) + '%; background:' +
+                            c + '"></div></div>' +
+                        '<div class="mon-sub" style="margin-top:0; margin-bottom:2px">' +
+                            (dk.used_gb || 0) + ' / ' + (dk.total_gb || 0) +
+                            ' ГБ</div>';
+                }).join('');
+            } else {
+                disksBox.innerHTML = '<div class="muted" style="font-size:0.85em">—</div>';
+            }
+        }
+
+        // --- GPU ---
+        const gpuBox = document.getElementById('mon-gpu-list');
+        if (gpuBox) {
+            if (d.gpu && d.gpu.length > 0) {
+                gpuBox.innerHTML = d.gpu.map(g => {
+                    const util = g.utilization_percent;
+                    const utilStr = (util == null) ? '—' :
+                        Math.round(util) + '%';
+                    const utilColor = _monColor(util);
+                    const vramStr = g.vram_mb ?
+                        (g.vram_mb / 1024).toFixed(1) + ' ГБ' : '—';
+                    const name = _monEscape(g.name || 'GPU');
+                    return '<div class="mon-list-item">' +
+                        '<span class="name" title="' + name + '">' + name + '</span>' +
+                        '<span class="val" style="color:' + utilColor + '">' +
+                            utilStr + '</span>' +
+                        '</div>' +
+                        '<div class="mon-sub" style="margin-top:0; margin-bottom:4px">' +
+                            'VRAM: ' + vramStr + '</div>';
+                }).join('');
+            } else if (d.gpu_ready) {
+                gpuBox.innerHTML = '<div class="muted" style="font-size:0.85em">не найдено</div>';
+            } else {
+                gpuBox.innerHTML = '<div class="muted" style="font-size:0.85em">загрузка...</div>';
+            }
+        }
+    } catch (e) {
+        // тихо — оставляем старые значения; UI не должен падать
+        console.debug('refreshSystemStats:', e);
+    }
+}
+
+// =====================================================================
 // Инициализация
 // =====================================================================
 (function init() {
     setTimeout(loadPtzCapabilities, 500);
+    setTimeout(refreshSystemStats, 300);
+    setInterval(refreshSystemStats, 3000);
 })();
 </script>
 

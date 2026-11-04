@@ -22,6 +22,15 @@ network:
     - name: eth2
       ip: 172.16.0.10
       description: "Изолированная сеть"
+      network:
+        auto_detect: true
+        exclude:
+          - happ
+          - docker0
+          - virbr0
+        interfaces:
+          - name: eth0
+            ...
 
 mediamtx:
   binary: "./bin/mediamtx.exe"
@@ -30,6 +39,22 @@ mediamtx:
   webrtc_port: 8889           # поиск серверов
   api_url: "http://127.0.0.1:9997"
   loopback_codec: auto
+# =====================================================================
+#  Motion detection (OpenCV) — независимый от ONVIF способ ловить движение
+# =====================================================================
+#  Работает для любой камеры (IP, USB, аналог). Нагрузка ~5–15% CPU
+#  на камеру. Per-camera override задаётся в объекте камеры:
+#      motion_detection_enabled: true   # или false
+#      motion_min_area: 500             # 100–5000, меньше = чувствительнее
+motion_detection:
+  enabled: true
+  global:
+    frame_skip: 2
+    min_area: 500
+    settle_seconds: 5.0
+    re_emit_interval: 10.0
+    analysis_width: 320
+  per_camera: {}
 
 security:
   auth_enabled: true

@@ -269,7 +269,14 @@ class Recorder:
             "-c:v", "copy",
         ]
         if self.include_audio:
-            cmd += ["-c:a", "copy"]
+            # MP4-контейнер НЕ поддерживает некоторые аудиокодеки IP-камер
+            # (pcm_alaw / pcm_mulaw — G.711 — стандарт для Hikvision,
+            # Dahua, Reolink и др.). "copy" даёт ошибку:
+            #   Could not find tag for codec pcm_alaw in stream #1,
+            #   codec not currently supported in container
+            # Поэтому перекодируем аудио в AAC (поддерживается MP4).
+            # Стоимость по CPU минимальна — аудио низкобитрейтное.
+            cmd += ["-c:a", "aac", "-b:a", "64k"]
         else:
             cmd += ["-an"]
 

@@ -10,8 +10,14 @@ API управления потоками и страница «Потоки».
       для каждого сетевого интерфейса (гибрид: автоопределение
       системы + ручные описания из config.yaml).
 """
+import base64
+import hashlib
 import logging
+import secrets
 from pathlib import Path
+
+import requests
+import yaml
 
 from flask import (
     Blueprint, jsonify, request, render_template, current_app, g,
@@ -46,6 +52,213 @@ def _save_config(cfg: dict, path: Path):
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
 
+
+def _hash_password_sha256(password: str) -> str:
+    """
+    Возвращает хеш пароля в формате MediaMTX:
+        "sha256:<base64(sha256(password))>"
+    Используется в authInternalUsers[].pass.
+    """
+    digest = hashlib.sha256(password.encode("utf-8")).digest()
+    return "sha256:" + base64.b64encode(digest).decode("ascii")
+
+
+def _generate_password(length: int = 12) -> str:
+    """
+    Генерирует случайный пароль для read_password потока.
+    Используется в api_add_stream, если пользователь не задал пароль явно.
+    """
+    return secrets.token_urlsafe(length)
+
+
+def _sync_mediamtx_auth(config: dict, mediamtx_config_path: Path) -> int:
+    """
+    Синхронизирует authInternalUsers в mediamtx.yml с потоками из config.
+
+    Правила (ТЗ, задача №2, п. 2.2b):
+    - vhs_<id> создаётся для каждого enabled-потока с непустым read_password;
+    - ips = allowed_ips (если пусто — ключ ips не добавляется = любой IP);
+    - permissions = [{action: read, path: "/<path>"}];
+    - удаляются все старые vhs_* пользователи;
+    - гарантируется наличие пользователя с action: api (иначе Flask
+      потеряет доступ к API MediaMTX);
+    - self-heal: если итог пуст — ключ authInternalUsers удаляется целиком
+      (дефолтное поведение MediaMTX, API открыт);
+    - сохраняет динамические пути (source=publisher), добавленные через API,
+      чтобы hot-reload не удалил их (иначе Camera/FFmpeg получат 400/404).
+
+    Возвращает количество добавленных vhs_* пользователей.
+    """
+    if not mediamtx_config_path:
+        return 0
+    mtx_path = Path(mediamtx_config_path)
+    if not mtx_path.exists():
+        logger.warning(
+            "mediamtx.yml не найден (%s), синхронизация auth пропущена",
+            mtx_path,
+        )
+        return 0
+
+    try:
+        with open(mtx_path, "r", encoding="utf-8") as f:
+            mtx_cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.error("Не удалось прочитать mediamtx.yml: %s", e)
+        return 0
+
+    # --- Защита от пустого файла ---
+    # Если файл пустой (yaml.safe_load дал {} или None), записываем
+    # базовую конфигурацию MediaMTX, иначе MediaMTX не стартует
+    # (нет apiAddress, rtspAddress) — а мы в цикле будем перезаписывать
+    # пустоту пустотой.
+    if not mtx_cfg or not isinstance(mtx_cfg, dict):
+        mtx_cfg = {}
+
+    if not mtx_cfg.get("apiAddress") and not mtx_cfg.get("rtspAddress"):
+        BASE_MTX_CONFIG = {
+            "logLevel": "info",
+            "rtspAddress": ":8554",
+            "rtspTransports": ["tcp"],
+            "api": True,
+            "apiAddress": "127.0.0.1:9997",
+            "webrtc": True,
+            "webrtcAddress": ":8889",
+            "rtmp": False,
+            "hls": False,
+            "srt": False,
+            "playback": False,
+            "paths": {},
+        }
+        mtx_cfg.update(BASE_MTX_CONFIG)
+        logger.info(
+            "mediamtx.yml: пустой/отсутствуют базовые ключи — "
+            "восстановлена базовая конфигурация MediaMTX"
+        )
+
+    existing_users = mtx_cfg.get("authInternalUsers") or []
+
+    # 1) Убираем старых vhs_*
+    kept_users = []
+    for u in existing_users:
+        if not isinstance(u, dict):
+            continue
+        if str(u.get("user", "")).startswith("vhs_"):
+            continue
+        kept_users.append(u)
+
+    # 2) Собираем новых vhs_* из config
+    new_vhs_users = []
+    for s in config.get("streams", []):
+        if not s.get("enabled", True):
+            continue
+        password = (s.get("read_password") or "").strip()
+        if not password:
+            continue
+        stream_id = s.get("id", "")
+        path = s.get("path", "")
+        if not stream_id or not path:
+            continue
+        user_entry = {
+            "user": f"vhs_{stream_id}",
+            "pass": _hash_password_sha256(password),
+            "permissions": [{"action": "read", "path": path}],
+        }
+        allowed_ips = s.get("allowed_ips") or []
+        if allowed_ips:
+            user_entry["ips"] = list(allowed_ips)
+        new_vhs_users.append(user_entry)
+
+    merged_users = kept_users + new_vhs_users
+
+    # 3) Self-heal: если итог пуст — ключ убираем целиком
+    if not merged_users:
+        mtx_cfg.pop("authInternalUsers", None)
+        logger.info(
+            "mediamtx.yml: authInternalUsers пуст — ключ удалён "
+            "(дефолтное поведение MediaMTX)"
+        )
+    else:
+        # 4) Гарантируем наличие пользователя с action: api
+        has_api_user = False
+        for u in merged_users:
+            for perm in u.get("permissions", []):
+                if isinstance(perm, dict) and perm.get("action") == "api":
+                    has_api_user = True
+                    break
+            if has_api_user:
+                break
+
+        if not has_api_user:
+            merged_users.append({
+                "user": "any",
+                "ips": ["127.0.0.1", "::1"],
+                "permissions": [
+                    {"action": "api"},
+                    {"action": "publish"},
+                    {"action": "read"},
+                    {"action": "playback"},
+                ],
+            })
+            logger.info(
+                "mediamtx.yml: добавлен пользователь 'any' с action: api "
+                "(защита от закрытия API MediaMTX)"
+            )
+
+        mtx_cfg["authInternalUsers"] = merged_users
+
+    # --- ВАЖНО: сохраняем динамические пути, добавленные через API ---
+    # MediaMTX при hot-reload перечитывает файл и УДАЛЯЕТ все пути,
+    # которых нет в секции paths. Если в файле "paths: {}" —
+    # все raw-пути и пользовательские потоки будут потеряны,
+    # и Camera/FFmpeg получат 400/404. Снимаем снимок через API
+    # и записываем в файл, чтобы сохранить их.
+    try:
+        r = requests.get(
+            "http://127.0.0.1:9997/v3/config/paths/list",
+            timeout=5,
+        )
+        if r.status_code == 200:
+            items = r.json().get("items", []) or []
+            if items:
+                mtx_cfg["paths"] = {
+                    item["name"]: item for item in items
+                    if isinstance(item, dict) and item.get("name")
+                }
+                logger.info(
+                    "mediamtx.yml: сохранено %d динамических путей",
+                    len(mtx_cfg["paths"]),
+                )
+    except Exception as e:
+        logger.warning(
+            "mediamtx.yml: не удалось сохранить динамические пути: %s", e,
+        )
+
+    try:
+        with open(mtx_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(mtx_cfg, f, allow_unicode=True, sort_keys=False)
+    except Exception as e:
+        logger.error("Не удалось записать mediamtx.yml: %s", e)
+        return 0
+
+    logger.info(
+        "mediamtx.yml: синхронизировано %d пользователей vhs_* (всего: %d)",
+        len(new_vhs_users), len(merged_users),
+    )
+    return len(new_vhs_users)
+
+
+def _maybe_sync_auth(config: dict):
+    """
+    Вызывает _sync_mediamtx_auth, если в Flask config задан
+    MEDIAMTX_CONFIG_PATH. Иначе — тихо пропускает.
+    """
+    mtx_path = current_app.config.get("MEDIAMTX_CONFIG_PATH")
+    if not mtx_path:
+        return
+    try:
+        _sync_mediamtx_auth(config, Path(mtx_path))
+    except Exception as e:
+        logger.exception("Ошибка синхронизации mediamtx.yml: %s", e)
 
 def _raw_path(camera_id: str) -> str:
     """Имя raw-пути для камеры."""
@@ -167,7 +380,14 @@ def _apply_stream_to_mediamtx(stream_cfg: dict, cameras: dict, mediamtx, helpers
 
 def _ensure_raw_path(camera, mediamtx, helpers):
     raw = _raw_path(camera.id)
-
+    # --- дорабатываем проект. suppression guard ---
+    if getattr(camera, "raw_suppressed", False):
+        logger.info(
+            "[%s] raw-путь подавлен администратором, автосоздание пропущено",
+            camera.id,
+        )
+        return None
+    # --- дорабатываем проект. конец вставки ---
     try:
         status = mediamtx.get_path_status(raw)
         if status and status.get("ready"):
@@ -215,12 +435,18 @@ def api_list_streams():
         name = s["path"].lstrip("/")
         status = mediamtx.get_path_status(name) if mediamtx else None
 
-        # RTSP-ссылки для копирования
+        # RTSP-ссылки для копирования.
+        # Если у потока задан read_password — вставляем username в URL
+        # (без пароля: VLC/клиент запросит его вручную).
+        # Пароль в таблицу НЕ отдаём (has_read_password — маскировка).
+        has_pw = bool(s.get("read_password"))
+        auth_prefix = f"vhs_{s['id']}@" if has_pw else ""
         urls = [
             {
-                "url": f"rtsp://{ep['host']}:{rtsp_port}{s['path']}",
+                "url": f"rtsp://{auth_prefix}{ep['host']}:{rtsp_port}{s['path']}",
                 "label": ep["label"],
                 "host": ep["host"],
+                "requires_auth": has_pw,
             }
             for ep in endpoints
         ]
@@ -235,18 +461,20 @@ def api_list_streams():
             for ep in endpoints
         ]
 
-        result.append({
-            **s,
-            "camera_name": cam.name if cam else "—",
-            "estimate": est,
-            "urls": urls,
-            "webrtc_urls": webrtc_urls,
-            "runtime": {
-                "ready": bool(status and status.get("ready")),
-                "readers": (status or {}).get("readers", []) or [],
-                "bytes_received": (status or {}).get("bytesReceived", 0),
-            },
-        })
+        # Маскируем read_password — не отдаём plaintext в GET /api/streams.
+        # has_read_password: true/false — достаточно для значка 🔒 в UI.
+        out = {**s}
+        out["has_read_password"] = bool(out.pop("read_password", None))
+        out["camera_name"] = cam.name if cam else "—"
+        out["estimate"] = est
+        out["urls"] = urls
+        out["webrtc_urls"] = webrtc_urls
+        out["runtime"] = {
+            "ready": bool(status and status.get("ready")),
+            "readers": (status or {}).get("readers", []) or [],
+            "bytes_received": (status or {}).get("bytesReceived", 0),
+        }
+        result.append(out)
 
     totals = _total_estimated_load(cfg, cameras)
     return jsonify({
@@ -324,12 +552,25 @@ def api_add_stream():
         return jsonify({"error": "Поток с таким path уже существует"}), 409
 
     transcode = bool(payload.get("transcode", False))
+
+    # read_password: использовать явно заданный или сгенерировать автоматически.
+    # generated_password != None → вернём plaintext пользователю ОДИН раз
+    # в ответе на POST (потом увидеть нельзя, только сменить).
+    explicit_password = (payload.get("read_password") or "").strip()
+    if explicit_password:
+        read_password = explicit_password
+        generated_password = None
+    else:
+        read_password = _generate_password()
+        generated_password = read_password
+
     new_stream = {
         "id": payload["id"],
         "camera_id": payload["camera_id"],
         "path": payload["path"],
         "copy": not transcode,
         "enabled": bool(payload.get("enabled", True)),
+        "read_password": read_password,
     }
 
     if transcode:
@@ -357,7 +598,40 @@ def api_add_stream():
 
     existing.append(new_stream)
     _save_config(st["config"], st["config_path"])
-    return jsonify({"ok": True, "stream": new_stream}), 201
+    _maybe_sync_auth(st["config"])
+
+    # stream: маскируем read_password — не отдаём plaintext в ответе.
+    safe_stream = dict(new_stream)
+    safe_stream["has_read_password"] = bool(
+        safe_stream.pop("read_password", None)
+    )
+
+    resp = {"ok": True, "stream": safe_stream}
+    if generated_password is not None:
+        resp["generated_password"] = generated_password
+
+        # Готовые RTSP-URL с паролем — для копирования в модалке
+        # «Поток создан». Показываются ОДИН РАЗ (как и сам пароль).
+        try:
+            _eps = build_endpoints(st["config"])
+            _port = st["config"].get("mediamtx", {}).get("rtsp_port", 8554)
+            resp["generated_urls"] = [
+                {
+                    "url": (
+                        f"rtsp://vhs_{new_stream['id']}:{generated_password}"
+                        f"@{ep['host']}:{_port}{new_stream['path']}"
+                    ),
+                    "label": ep["label"],
+                    "host": ep["host"],
+                }
+                for ep in _eps
+            ]
+        except Exception as e:
+            logger.warning(
+                "Не удалось сгенерировать full URL: %s", e,
+            )
+
+    return jsonify(resp), 201
 
 
 # ----------------------------------------------------------------------
@@ -380,6 +654,7 @@ def api_delete_stream(stream_id: str):
 
     streams.remove(stream)
     _save_config(st["config"], st["config_path"])
+    _maybe_sync_auth(st["config"])
     return jsonify({"ok": True})
 
 
@@ -418,7 +693,156 @@ def api_toggle_stream(stream_id: str):
             return jsonify({"error": f"MediaMTX: {e}"}), 500
 
     _save_config(st["config"], st["config_path"])
+    _maybe_sync_auth(st["config"])
     return jsonify({"ok": True, "enabled": stream["enabled"]})
+
+
+# ----------------------------------------------------------------------
+# API: обновить поток (path / allowed_ips / read_password)
+# ----------------------------------------------------------------------
+@streams_bp.route("/api/streams/<stream_id>", methods=["PATCH"])
+@admin_required
+def api_update_stream(stream_id: str):
+    """
+    Обновляет path, allowed_ips и/или read_password существующего потока.
+
+    - path: строка, начинается с '/', не '/', не '/__raw_*', без пробелов,
+            не занят другим потоком (иначе 409).
+            При смене — remove_path(старый) + add_path(новый).
+    - allowed_ips: массив строк (IP или CIDR), пустые игнорируются.
+    - read_password: строка; пустая = пароль не менять.
+
+    При ошибке MediaMTX — откат config и возврат 500.
+    """
+    st = _state()
+    streams = st["config"].get("streams", [])
+    stream = next((s for s in streams if s.get("id") == stream_id), None)
+    if not stream:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+
+    old_path = stream.get("path", "")
+    new_path = old_path
+
+    if "path" in payload:
+        candidate = str(payload.get("path") or "").strip()
+        if not candidate:
+            return jsonify({"error": "path не может быть пустым"}), 400
+        if not candidate.startswith("/"):
+            return jsonify({
+                "error": "path должен начинаться с '/'"
+            }), 400
+        if candidate == "/":
+            return jsonify({"error": "path не может быть '/'"}), 400
+        if candidate.startswith("/__raw_"):
+            return jsonify({
+                "error": "path не может начинаться с '/__raw_'"
+            }), 400
+        if any(ch.isspace() for ch in candidate):
+            return jsonify({
+                "error": "path не может содержать пробелы"
+            }), 400
+        if candidate != old_path:
+            occupied = any(
+                (s is not stream) and (s.get("path") == candidate)
+                for s in streams
+            )
+            if occupied:
+                return jsonify({
+                    "error": f"path '{candidate}' уже занят другим потоком"
+                }), 409
+            new_path = candidate
+
+    new_ips = None
+    if "allowed_ips" in payload:
+        raw = payload.get("allowed_ips")
+        if not isinstance(raw, list):
+            return jsonify({
+                "error": "allowed_ips должен быть массивом строк"
+            }), 400
+        cleaned_ips = []
+        for item in raw:
+            if not isinstance(item, str):
+                return jsonify({
+                    "error": "allowed_ips: элементы должны быть строками"
+                }), 400
+            s = item.strip()
+            if s:
+                cleaned_ips.append(s)
+        new_ips = cleaned_ips
+
+    new_password = None
+    password_changed = False
+    if "read_password" in payload:
+        pw = payload.get("read_password")
+        if not isinstance(pw, str):
+            return jsonify({
+                "error": "read_password должен быть строкой"
+            }), 400
+        if pw != "":
+            new_password = pw
+            password_changed = True
+
+    # --- Запоминаем старое состояние для отката ---
+    backup = dict(stream)
+
+    # --- Применяем изменения в config (in-memory) ---
+    if new_path != old_path:
+        stream["path"] = new_path
+    if new_ips is not None:
+        stream["allowed_ips"] = new_ips
+    if password_changed:
+        stream["read_password"] = new_password
+
+    # --- MediaMTX: пересоздаём путь при смене path ---
+    if st["mediamtx"] and new_path != old_path:
+        old_name = old_path.lstrip("/")
+        try:
+            st["mediamtx"].remove_path(old_name)
+        except Exception as e:
+            logger.warning(
+                "Не удалось удалить старый путь %s: %s", old_name, e
+            )
+        try:
+            cam = st["cameras"].get(stream.get("camera_id"))
+            if cam:
+                _ensure_raw_path(
+                    cam, st["mediamtx"], st["mediamtx_helpers"],
+                )
+            _apply_stream_to_mediamtx(
+                stream, st["cameras"],
+                st["mediamtx"], st["mediamtx_helpers"],
+            )
+        except Exception as e:
+            stream.clear()
+            stream.update(backup)
+            try:
+                _apply_stream_to_mediamtx(
+                    stream, st["cameras"],
+                    st["mediamtx"], st["mediamtx_helpers"],
+                )
+            except Exception:
+                pass
+            logger.exception("MediaMTX: ошибка при смене path: %s", e)
+            return jsonify({"error": f"MediaMTX: {e}"}), 500
+
+    try:
+        _save_config(st["config"], st["config_path"])
+    except Exception as e:
+        stream.clear()
+        stream.update(backup)
+        logger.exception("Не удалось сохранить config.yaml: %s", e)
+        return jsonify({"error": f"config: {e}"}), 500
+
+    _maybe_sync_auth(st["config"])
+
+    # Маскируем read_password — не отдаём plaintext в ответе на PATCH.
+    safe_stream = dict(stream)
+    safe_stream["has_read_password"] = bool(
+        safe_stream.pop("read_password", None)
+    )
+    return jsonify({"ok": True, "stream": safe_stream})
 
 
 # ----------------------------------------------------------------------

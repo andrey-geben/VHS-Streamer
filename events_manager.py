@@ -174,9 +174,14 @@ class EventsDB:
             finally:
                 conn.close()
 
-    def query(self, camera_id=None, since_ts=None,
+    def query(self, camera_id=None, since_ts=None, until_ts=None,
               severity=None, limit: int = 200):
-        """Возвращает список событий (новые — первыми)."""
+        """
+        Возвращает список событий (новые — первыми).
+
+        until_ts (необязательный) — верхняя граница по времени (ts < until_ts).
+        Используется для выборки событий за конкретный день (timeline архива).
+        """
         with self._lock:
             conn = self._connect()
             try:
@@ -188,6 +193,9 @@ class EventsDB:
                 if since_ts is not None:
                     sql += " AND ts >= ?"
                     params.append(since_ts)
+                if until_ts is not None:
+                    sql += " AND ts < ?"
+                    params.append(until_ts)
                 if severity:
                     sql += " AND severity = ?"
                     params.append(severity)
@@ -292,7 +300,6 @@ def _safe_json(text):
     except Exception:
         return {}
 
-
 # ----------------------------------------------------------------------
 # Менеджер
 # ----------------------------------------------------------------------
@@ -315,7 +322,7 @@ class EventsManager:
         self._sessions = {}
         self._sessions_lock = threading.Lock()
         self._dedup_cache = {}
-                # Камеры без ONVIF Events — не проверяем повторно
+        # Камеры без ONVIF Events — не проверяем повторно
         self._no_events_cams = set()
         # Подписчики на события (рекордеры и т.п.)
         self._subscribers = []
@@ -399,7 +406,7 @@ class EventsManager:
             try:
                 events = session["client"].pull_messages(timeout_sec=1)
                 for ev in events:
-                    self._save_event(cam_id, ev)
+                    self.ingest_event(cam_id, ev)
             except Exception as e:
                 logger.debug("[%s] pull_messages error: %s", cam_id, e)
 
@@ -456,12 +463,31 @@ class EventsManager:
             self.last_error = str(e)
             return None
 
-    def _save_event(self, cam_id, event):
+    def ingest_event(self, cam_id: str, event: dict):
         """
-        Сохраняет событие с дедупликацией по группе топика.
-        События из одной группы (MotionAlarm + CellMotionDetector)
-        считаются одним логическим событием.
-        Служебные топики (Monitoring/...) игнорируются.
+        Публичный вход для событий из любого источника
+        (ONVIF PullPoint, MotionDetector по OpenCV, ручной вызов).
+
+        Флаги в event (опциональные, по умолчанию True):
+            _dedup (bool): False — пропустить дедупликацию.
+                Используется для «продления» записи: повторные
+                active=True должны доходить до EventRecorder,
+                даже если предыдущее событие было < dedup_window назад.
+            _save (bool): False — не писать в /events (БД),
+                но уведомить подписчиков. Используется для тех же
+                «продлений»: EventRecorder продлевает запись,
+                а журнал не засоряется.
+
+        Логика:
+            - _is_noise(topic) → отбрасываем всегда;
+            - _dedup=True: проверяем (cam_id, group) + is_active
+              в пределах dedup_window — если совпадает, отбрасываем;
+            - _save=True: пишем в events.db и инкрементим events_saved;
+            - в конце — _notify_subscribers() (EventRecorder и др.).
+
+        Возвращает True при успехе, None при отбрасывании/ошибке.
+        Совместим с _save_event для ONVIF-событий: там нет _dedup/_save,
+        поэтому действуют дефолты True/True — поведение идентично.
         """
         topic = event.get("topic") or ""
 
@@ -469,38 +495,52 @@ class EventsManager:
         if _is_noise(topic):
             return None
 
+        dedup = bool(event.get("_dedup", True))
+        save = bool(event.get("_save", True))
+
         now = event.get("_ts", time.time())
         is_active = bool(event.get("is_active"))
         group = _topic_group(topic)
 
-        # Дедуп по группе
-        key = (cam_id, group)
-        last = self._dedup_cache.get(key)
+        # Дедупликация (только если запрошена)
+        if dedup:
+            key = (cam_id, group)
+            last = self._dedup_cache.get(key)
+            if last:
+                last_ts, last_active = last
+                if (last_active == is_active
+                        and now - last_ts < self.dedup_window):
+                    return None
+            self._dedup_cache[key] = (now, is_active)
 
-        if last:
-            last_ts, last_active = last
-            if (last_active == is_active
-                    and now - last_ts < self.dedup_window):
+        # Сохранение в БД (только если запрошено)
+        if save:
+            try:
+                self.db.insert(cam_id, event)
+                self.events_saved += 1
+                logger.info(
+                    "[%s] Событие: %s (group=%s, active=%s)",
+                    cam_id,
+                    event.get("topic_short") or topic,
+                    group,
+                    is_active,
+                )
+            except Exception as e:
+                logger.exception(
+                    "[%s] Ошибка сохранения события: %s", cam_id, e
+                )
                 return None
+        else:
+            logger.debug(
+                "[%s] Событие (только notify, без БД): %s active=%s",
+                cam_id,
+                event.get("topic_short") or topic,
+                is_active,
+            )
 
-        self._dedup_cache[key] = (now, is_active)
-
-        try:
-            self.db.insert(cam_id, event)
-            self.events_saved += 1
-            logger.info("[%s] Событие: %s (group=%s, active=%s)",
-                        cam_id,
-                        event.get("topic_short") or topic,
-                        group,
-                        is_active)
-
-            # Уведомить подписчиков (рекордеры по событиям)
-            self._notify_subscribers(cam_id, event)
-
-            return True
-        except Exception as e:
-            logger.exception("[%s] Ошибка сохранения события: %s", cam_id, e)
-            return None
+        # Уведомить подписчиков (EventRecorder и др.) — всегда
+        self._notify_subscribers(cam_id, event)
+        return True
 
     def _maybe_cleanup(self):
         now = time.time()
@@ -517,6 +557,11 @@ class EventsManager:
 
     @staticmethod
     def _parse_rtsp(rtsp_url: str):
+        """
+        Разбирает RTSP-URL и возвращает {host, port, user, password, path}.
+        Fallback для нестандартных URL (iSpy/AgentDVR), где креды лежат
+        внутри path: rtsp://host:554/user=..._password=..._channel=...
+        """
         m = re.match(
             r"^rtsp://"
             r"(?:(?P<user>[^:@/]+)(?::(?P<pass>[^@/]*))?@)?"
@@ -528,12 +573,24 @@ class EventsManager:
         )
         if not m:
             return None
+
+        user = m.group("user") or ""
+        password = m.group("pass") or ""
+        path = m.group("path") or ""
+
+        # Fallback: iSpy-формат "user=..._password=..." внутри path.
+        if not user and not password and path:
+            m2 = re.search(r"user=([^_&]+)_password=([^_&]+)", path)
+            if m2:
+                user = m2.group(1)
+                password = m2.group(2)
+
         return {
-            "user": m.group("user") or "",
-            "password": m.group("pass") or "",
+            "user": user,
+            "password": password,
             "host": m.group("host") or "",
             "port": int(m.group("port")) if m.group("port") else 554,
-            "path": m.group("path") or "",
+            "path": path,
         }
 
     def get_status(self) -> dict:

@@ -26,7 +26,6 @@ datas = [
 ]
 
 # --- NumPy: собираем всё, что PyInstaller может пропустить ---
-# Начиная с numpy 2.3.0 некоторые подмодули не подхватываются автоматически.
 try:
     numpy_datas = collect_data_files("numpy")
     numpy_binaries = collect_dynamic_libs("numpy")
@@ -48,6 +47,12 @@ except Exception:
     opencv_binaries = []
     opencv_hiddenimports = []
 
+# --- psutil: C-extension, подхватываем подмодули на всякий случай ---
+try:
+    psutil_hiddenimports = collect_submodules("psutil")
+except Exception:
+    psutil_hiddenimports = []
+
 # --- Скрытые импорты ---
 hiddenimports = [
     "numpy",
@@ -63,6 +68,9 @@ hiddenimports = [
     "werkzeug",
     "jinja2",
     "PIL",
+    "psutil",
+
+    # --- Модули проекта ---
     "helper",
     "__version__",
     "audio_probe",
@@ -71,11 +79,30 @@ hiddenimports = [
     "mediamtx_manager",
     "diagnostics",
     "onvif_client",
+    "onvif_events",
+    "onvif_server",
     "camera_templates",
     "netdetect",
+    "events_manager",
+    "event_recorder",
+    "recorder",
+    "camera",
+    "duplicator",
+    "auth",
+    "settings_api",
+    "streams_api",
+    "bootstrap",
+
+    # --- Модули, появившиеся после релиза v1.0.0 ---
+    # Импортируются лениво или из новых фич. Добавляем явно для надёжности.
+    "device_discovery",   # задача №1 — обнаружение локальных устройств
+    "motion_detector",    # motion detection по OpenCV
+    "sadp_discovery",     # SADP (Hikvision) discovery
+    "system_monitor",     # системный мониторинг (CPU/RAM/диски/GPU)
 ]
 hiddenimports += numpy_hiddenimports
 hiddenimports += opencv_hiddenimports
+hiddenimports += psutil_hiddenimports
 
 binaries = numpy_binaries + opencv_binaries
 

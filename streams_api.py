@@ -23,7 +23,7 @@ from flask import (
     Blueprint, jsonify, request, render_template, current_app, g,
 )
 
-from auth import login_required, admin_required
+from auth import login_required, admin_required, can_access_camera
 from netdetect import build_endpoints
 
 logger = logging.getLogger(__name__)
@@ -429,6 +429,8 @@ def api_list_streams():
 
     result = []
     for s in cfg.get("streams", []):
+        if not can_access_camera(s.get("camera_id")):
+            continue
         cam = cameras.get(s.get("camera_id"))
         est = _estimate_load(s, cam) if cam else None
 
@@ -498,6 +500,8 @@ def api_streams_stats():
     cameras = st["cameras"]
     result = []
     for cam_id, cam in cameras.items():
+        if not can_access_camera(cam_id):
+            continue
         count = _count_streams_for_camera(cfg, cam_id)
         result.append({
             "camera_id": cam_id,

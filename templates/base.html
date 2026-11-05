@@ -5,6 +5,10 @@
     <title>{% block title %}VHS-Streamer{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=4">
+        <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#1e2126">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=4">
     <link rel="apple-touch-icon" href="/favicon.ico?v=4">
     <style>
@@ -82,12 +86,22 @@
                  font-size:0.75em; margin-left:4px;
                  line-height:1.6em;"></span>
         </a>
+        {% if user and user.role == 'admin' %}
         <a href="{{ url_for('settings.settings_page') }}">Настройки</a>
         <a href="{{ url_for('api_status') }}">API</a>
-        {% if user %}
+        {% endif %}
+                {% if user %}
             <span class="user">{{ user.username }} ({{ user.role }})</span>
             <a href="{{ url_for('logout') }}">Выход</a>
         {% endif %}
+        <button id="pwa-install-btn" type="button"
+                style="display:none; background:#2a6df4; color:#fff;
+                       border:none; border-radius:4px; padding:6px 10px;
+                       cursor:pointer; font-size:0.9em; margin-left:18px;"
+                title="Установить VHS-Streamer как приложение">
+            📲 Установить
+        </button>
+    </nav>
     </nav>
 </header>
 <main>
@@ -162,4 +176,49 @@
 </body>
 </body>
 </body>
+<script>
+// PWA: регистрация service worker + кнопка «Установить»
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js')
+            .then(function (reg) {
+                console.log('PWA: SW ok, scope =', reg.scope);
+            })
+            .catch(function (err) {
+                console.log('PWA: SW fail (нужен localhost/HTTPS):', err.message);
+            });
+    });
+}
+
+let _pwaPrompt = null;
+
+window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    _pwaPrompt = e;
+    const btn = document.getElementById('pwa-install-btn');
+    if (btn) btn.style.display = 'inline-block';
+});
+
+window.addEventListener('appinstalled', function () {
+    _pwaPrompt = null;
+    const btn = document.getElementById('pwa-install-btn');
+    if (btn) btn.style.display = 'none';
+    if (typeof showToast === 'function') {
+        showToast('VHS-Streamer установлен');
+    }
+});
+
+document.addEventListener('DOMContentLoaded', function () {
+    const btn = document.getElementById('pwa-install-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async function () {
+        if (!_pwaPrompt) return;
+        _pwaPrompt.prompt();
+        const choice = await _pwaPrompt.userChoice;
+        console.log('PWA: userChoice =', choice.outcome);
+        _pwaPrompt = null;
+        btn.style.display = 'none';
+    });
+});
+</script>
 </html>

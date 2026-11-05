@@ -117,6 +117,7 @@ from recorder import Recorder
 from event_recorder import EventRecorder
 from duplicator import StreamDuplicator
 import auth as auth_mod
+from auth import can_access_camera
 from settings_api import settings_bp
 from onvif_server import onvif_bp
 from streams_api import streams_bp, _sync_mediamtx_auth
@@ -332,59 +333,58 @@ for cam_cfg in cameras_cfg:
         logger.exception("Не удалось инициализировать камеру %s: %s",
                          cam_cfg.get("id"), e)
 
-        # ======================================================================
-        #  MotionDetector (OpenCV) — независимый от ONVIF способ узнавать о движении
-        # ======================================================================
-        #  Работает для любой камеры (IP, USB, аналог), потому что кадры всё
-        #  равно проходят через Camera._run() → Camera.subscribe().
-        #  События идут через EventsManager.ingest_event() — в тот же канал,
-        #  что и ONVIF-события: пишутся в /events и триггерят EventRecorder.
-        # ----------------------------------------------------------------------
-    motion_detector_mgr = None
-    _motion_cfg = config.get("motion_detection")
-    if _motion_cfg is None:
+
+# ======================================================================
+#  MotionDetector (OpenCV) — независимый от ONVIF способ узнавать о движении
+# ======================================================================
+#  ВАЖНО: блок должен быть ВНЕ цикла по камерам. Если он внутри —
+#  при 2+ камерах создаётся по одному MotionDetectorManager на итерацию,
+#  старые остаются в памяти с подписками → дубли событий и утечка памяти.
+#  Работает для любой камеры (IP, USB, аналог), потому что кадры всё
+#  равно проходят через Camera._run() → Camera.subscribe().
+#  События идут через EventsManager.ingest_event() — в тот же канал,
+#  что и ONVIF-события: пишутся в /events и триггерят EventRecorder.
+# ----------------------------------------------------------------------
+motion_detector_mgr = None
+_motion_cfg = config.get("motion_detection")
+if _motion_cfg is None:
+    logger.info(
+        "MotionDetector: секция motion_detection отсутствует — выключен. "
+        "Добавьте её в config.yaml, чтобы включить."
+    )
+elif isinstance(_motion_cfg, dict) and _motion_cfg.get("enabled", True) is False:
+    logger.info("MotionDetector: выключен в config.yaml (enabled: false)")
+elif events_manager is None:
+    logger.warning(
+        "MotionDetector: EventsManager не запущен — выключен "
+        "(некому принимать события)"
+    )
+else:
+    try:
+        from motion_detector import MotionDetectorManager
+
+        motion_detector_mgr = MotionDetectorManager(
+            _motion_cfg, events_manager.ingest_event
+        )
+        _attached = 0
+        for cam_id, cam in cameras.items():
+            cam_cfg = next(
+                (c for c in cameras_cfg if c.get("id") == cam_id), {}
+            )
+            motion_detector_mgr.attach_camera(cam_id, cam_cfg)
+            cam.subscribe(
+                lambda frame, cid=cam_id: motion_detector_mgr.process_frame(
+                    cid, frame
+                )
+            )
+            _attached += 1
         logger.info(
-            "MotionDetector: секция motion_detection отсутствует — выключен. "
-            "Добавьте её в config.yaml, чтобы включить."
+            "MotionDetector: подключён к %d камерам (%s)",
+            _attached, ", ".join(cameras.keys()),
         )
-    elif isinstance(_motion_cfg, dict) and _motion_cfg.get("enabled", True) is False:
-        logger.info("MotionDetector: выключен в config.yaml (enabled: false)")
-    elif events_manager is None:
-        logger.warning(
-            "MotionDetector: EventsManager не запущен — выключен "
-            "(некому принимать события)"
-        )
-    else:
-        try:
-            from motion_detector import MotionDetectorManager
-
-            motion_detector_mgr = MotionDetectorManager(
-                _motion_cfg, events_manager.ingest_event
-            )
-            _attached = 0
-            for cam_id, cam in cameras.items():
-                cam_cfg = next(
-                    (c for c in cameras_cfg if c.get("id") == cam_id), {}
-                )
-                motion_detector_mgr.attach_camera(cam_id, cam_cfg)
-                cam.subscribe(
-                    lambda frame, cid=cam_id: motion_detector_mgr.process_frame(
-                        cid, frame
-                    )
-                )
-                _attached += 1
-            logger.info(
-                "MotionDetector: подключён к %d камерам (%s)",
-                _attached, ", ".join(cameras.keys()),
-            )
-        except Exception as e:
-            logger.exception("Не удалось запустить MotionDetector: %s", e)
-            motion_detector_mgr = None
-
-    # ======================================================================
-    #  Flask
-    # ======================================================================
-
+    except Exception as e:
+        logger.exception("Не удалось запустить MotionDetector: %s", e)
+        motion_detector_mgr = None
 
 # ======================================================================
 #  Flask
@@ -475,7 +475,28 @@ def favicon():
         RES_DIR / "static" / "favicon.ico",
         mimetype="image/x-icon",
     )
+# ======================================================================
+#  PWA: manifest.json и service worker
+# ======================================================================
+@app.route("/manifest.json")
+def pwa_manifest():
+    resp = send_from_directory(
+        RES_DIR / "static", "manifest.json",
+        mimetype="application/manifest+json",
+    )
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
 
+
+@app.route("/sw.js")
+def pwa_service_worker():
+    resp = send_from_directory(
+        RES_DIR / "static", "sw.js",
+        mimetype="application/javascript",
+    )
+    resp.headers["Service-Worker-Allowed"] = "/"
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 # ======================================================================
 #  О программе
@@ -502,20 +523,29 @@ def about_page():
 @app.route("/")
 @auth_mod.login_required
 def index():
-    cam_statuses = [c.get_status() for c in cameras.values()]
-    rec_statuses = {cid: r.get_status() for cid, r in recorders.items()}
+    # Фильтр по доступу: viewer видит только разрешённые камеры
+    visible_cams = [
+        c for c in cameras.values() if can_access_camera(c.id)
+    ]
+    visible_recorders = {
+        cid: r for cid, r in recorders.items()
+        if can_access_camera(cid)
+    }
+
+    cam_statuses = [c.get_status() for c in visible_cams]
+    rec_statuses = {cid: r.get_status() for cid, r in visible_recorders.items()}
 
     total_archive_bytes = 0
-    for r in recorders.values():
+    for r in visible_recorders.values():
         try:
             total_archive_bytes += r.get_status()["archive_size_mb"] * 1024 * 1024
         except Exception:
             pass
 
     sysinfo = {
-        "cameras_total": len(cameras),
+        "cameras_total": len(visible_cams),
         "cameras_online": sum(1 for s in cam_statuses if s["connected"]),
-        "recorders": len(recorders),
+        "recorders": len(visible_recorders),
         "archive_size": human_size(total_archive_bytes),
         "archive_path": str(archive_root()),
         "duplicate_enabled": dup_cfg.get("enabled", False),
@@ -529,19 +559,121 @@ def index():
 
     return render_template(
         "index.html",
-        cameras=cameras.values(),
+        cameras=visible_cams,
         rec_statuses=rec_statuses,
         sysinfo=sysinfo,
         user=g.user,
+        # A.4: креды для MediaMTX (WHEP из iframe)
+        mtx_user=(g.user.get("username") if g.user else None),
+        mtx_token=auth_mod.get_mtx_token(),
     )
 
+# ======================================================================
+# A.1: MediaMTX authMethod: http — заглушка (разрешает всё, логирует)
+# ======================================================================
+#заменили на А.3.
+# ======================================================================
+# A.3: MediaMTX authMethod: http — реальная проверка
+# ======================================================================
+@app.route("/internal/mediamtx_auth", methods=["POST"])
+def internal_mediamtx_auth():
+    """
+    Проверка прав для MediaMTX authMethod: http.
 
+    MediaMTX при подключении шлёт POST:
+      {user, password, ip, action, path, protocol, id, query}
+
+    Действия `api` и `publish` уже исключены из HTTP-auth
+    (authHTTPExclude в mediamtx.yml). Сюда приходит только `read`.
+
+    Правила (A.3):
+      1. loopback + RTSP (Camera/recorder читают raw-путь) → 200.
+         Ломать нельзя — иначе встанет весь пайплайн записи/анализа.
+         Браузер сюда НЕ попадает: он идёт с protocol='webrtc'.
+      2. loopback + WebRTC (браузер) и любые внешние клиенты →
+         требуется валидная пара user/password:
+           - web-токен из Flask-сессии (A.4), или
+           - vhs_<stream_id>:<read_password>, или
+           - обычный пользователь из config.yaml.
+      3. Для web_token / config_user проверяем can_access_camera(cam_id).
+         Для stream_password — совпадение path с путём потока.
+    """
+    data = request.get_json(silent=True) or {}
+    ip = str(data.get("ip") or "")
+    action = str(data.get("action") or "")
+    path = str(data.get("path") or "")
+    protocol = str(data.get("protocol") or "")
+    user = str(data.get("user") or "")
+    password = str(data.get("password") or "")
+
+    # A.3: защищаем только read (publish/api отсечены authHTTPExclude)
+    if action != "read":
+        return "", 200
+
+    # 1. Loopback RTSP — Camera, recorder, motion_detector
+    if ip in ("127.0.0.1", "::1") and protocol != "webrtc":
+        return "", 200
+
+    # 2. Проверка creds
+    user_info = auth_mod.resolve_mtx_credentials(user, password)
+    if not user_info:
+        logger.info(
+            "mediamtx_auth DENY: no creds (ip=%r protocol=%r path=%r)",
+            ip, protocol, path,
+        )
+        return "", 401
+
+    kind = user_info.get("kind")
+
+    # 2a. Stream-password: путь должен совпадать с путём потока
+    if kind == "stream_password":
+        expected = (user_info.get("stream_path") or "").lstrip("/")
+        if path.lstrip("/") == expected:
+            return "", 200
+        logger.info(
+            "mediamtx_auth DENY: stream path mismatch (stream=%r path=%r)",
+            user_info.get("stream_id"), path,
+        )
+        return "", 401
+
+    # 2b. Web-token / config-user: проверяем доступ к камере
+    if path.startswith("__raw_"):
+        cam_id = path[len("__raw_"):]
+        if auth_mod.can_access_camera(cam_id, user_info):
+            return "", 200
+        logger.info(
+            "mediamtx_auth DENY: no cam access (user=%r cam=%r)",
+            user_info.get("username"), cam_id,
+        )
+        return "", 401
+
+    # 2c. Путь пользовательского потока (без __raw_)
+    mtx_path = path.lstrip("/")
+    for s in config.get("streams", []):
+        if (s.get("path") or "").lstrip("/") == mtx_path:
+            cam_id = s.get("camera_id")
+            if auth_mod.can_access_camera(cam_id, user_info):
+                return "", 200
+            logger.info(
+                "mediamtx_auth DENY: no cam access (user=%r stream=%r)",
+                user_info.get("username"), s.get("id"),
+            )
+            return "", 401
+
+    logger.info("mediamtx_auth DENY: unknown path=%r", path)
+    return "", 401
 # ======================================================================
 #  MJPEG
 # ======================================================================
 @app.route("/video_feed/<camera_id>")
 @auth_mod.login_required
 def video_feed(camera_id: str):
+    if not can_access_camera(camera_id):
+        logger.warning(
+            "access denied to video_feed %s by user %s",
+            camera_id, g.user.get("username") if g.user else "?",
+        )
+        abort(403)
     cam = cameras.get(camera_id)
     if not cam:
         abort(404)
@@ -565,6 +697,8 @@ def archive_page():
     root = archive_root()
     cams_data = []
     for cam in cameras.values():
+        if not can_access_camera(cam.id):
+            continue
         cam_dir = root / cam.id
         days = []
         if cam_dir.exists():
@@ -598,6 +732,8 @@ def archive_page():
 @app.route("/archive/<camera_id>/<date>/<filename>")
 @auth_mod.login_required
 def archive_file(camera_id: str, date: str, filename: str):
+    if not can_access_camera(camera_id):
+        abort(403)
     root = archive_root() / camera_id / date
     if not root.is_dir():
         abort(404)
@@ -632,6 +768,9 @@ def api_archive_timeline(camera_id: str):
           "cam_record_mode": "events" | "always" | "off",
         }
     """
+    if not can_access_camera(camera_id):
+        return jsonify({"error": "forbidden"}), 403
+
     cam = cameras.get(camera_id)
     if not cam:
         return jsonify({"error": "camera not found"}), 404
@@ -741,18 +880,26 @@ def api_archive_timeline(camera_id: str):
 @app.route("/api/status")
 @auth_mod.login_required
 def api_status():
+    # Фильтр по доступу: viewer не должен видеть статус чужих камер
+    visible_cam_ids = [cid for cid in cameras if can_access_camera(cid)]
+    visible_recorder_ids = [cid for cid in recorders if can_access_camera(cid)]
+    visible_loopback = [cid for cid in loopback_urls if can_access_camera(cid)]
     return jsonify({
         "app": {
             "name": APP_NAME,
             "version": __version__,
             "author": __author__,
         },
-        "cameras": [c.get_status() for c in cameras.values()],
-        "recorders": {cid: r.get_status() for cid, r in recorders.items()},
+        "cameras": [
+            cameras[cid].get_status() for cid in visible_cam_ids
+        ],
+        "recorders": {
+            cid: recorders[cid].get_status() for cid in visible_recorder_ids
+        },
         "mediamtx": {
             "running": mediamtx is not None,
             "port": mediamtx_cfg.get("rtsp_port", 8554),
-            "loopback_cameras": list(loopback_urls.keys()),
+            "loopback_cameras": visible_loopback,
         },
     })
 

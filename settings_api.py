@@ -14,7 +14,7 @@ API управления конфигурацией + страница наст�
     - шаблоны RTSP-путей по вендорам (Hikvision, Dahua, Reolink, Axis);
     - индивидуальный путь архива для каждой камеры.
 """
-from auth import login_required, admin_required
+from auth import login_required, admin_required, can_access_camera
 from camera import Camera
 from recorder import Recorder
 from event_recorder import EventRecorder
@@ -31,8 +31,8 @@ from flask import (
     Blueprint, jsonify, request, render_template, current_app, g,
 )
 
-from auth import login_required, admin_required
-from camera import Camera
+from auth import login_required, admin_required, can_access_camera
+from netdetect import build_endpoints
 from recorder import Recorder
 from event_recorder import EventRecorder
 import camera_templates as ct
@@ -75,6 +75,12 @@ def _serialize_config(cfg: dict, is_admin: bool) -> dict:
     c = copy.deepcopy(cfg)
     if is_admin:
         return c
+    # viewer: убираем камеры, к которым нет доступа
+    c["cameras"] = [
+        cam for cam in c.get("cameras", [])
+        if can_access_camera(cam.get("id"))
+    ]
+    # маскируем пароли и токен
     sec = c.get("security", {})
     for u in sec.get("users", []):
         if "password" in u:
@@ -391,11 +397,40 @@ def api_set_security():
             return jsonify({"error": f"Логин '{username}' повторяется"}), 400
 
         seen_names.add(username)
-        cleaned_users.append({
+
+        # Валидация поля cameras:
+        #   отсутствует / null  → None  (все камеры, обратная совместимость)
+        #   []                  → []    (ни одной)
+        #   ["*"]               → все
+        #   ["id1", "id2"]      → только эти
+        raw_cameras = u.get("cameras")
+        if raw_cameras is None:
+            cameras_list = None
+        elif isinstance(raw_cameras, list):
+            cameras_list = []
+            for c in raw_cameras:
+                if not isinstance(c, str):
+                    return jsonify({
+                        "error": f"cameras у '{username}': "
+                                 f"элементы должны быть строками"
+                    }), 400
+                c = c.strip()
+                if c and c not in cameras_list:
+                    cameras_list.append(c)
+        else:
+            return jsonify({
+                "error": f"cameras у '{username}': "
+                         f"должен быть массивом или null"
+            }), 400
+
+        entry = {
             "username": username,
             "password": password,
             "role": role,
-        })
+        }
+        if cameras_list is not None:
+            entry["cameras"] = cameras_list
+        cleaned_users.append(entry)
 
     if not cleaned_users:
         return jsonify({"error": "Список пользователей не может быть пустым"}), 400
@@ -441,12 +476,17 @@ def api_generate_password():
 @login_required
 def api_list_cameras():
     st = _state()
-    return jsonify([_camera_to_dict(c) for c in st["cameras"].values()])
+    return jsonify([
+        _camera_to_dict(c) for c in st["cameras"].values()
+        if can_access_camera(c.id)
+    ])
 
 
 @settings_bp.route("/api/cameras/<camera_id>", methods=["GET"])
 @login_required
 def api_get_camera(camera_id: str):
+    if not can_access_camera(camera_id):
+        return jsonify({"error": "forbidden"}), 403
     st = _state()
     cam = st["cameras"].get(camera_id)
     if not cam:
@@ -1632,6 +1672,10 @@ def api_events_list():
     except (TypeError, ValueError):
         limit = 200
 
+    # Проверка доступа, если фильтр по камере задан явно
+    if camera_id and not can_access_camera(camera_id):
+        return jsonify({"error": "forbidden", "events": []}), 403
+
     try:
         events = em.db.query(
             camera_id=camera_id,
@@ -1642,6 +1686,13 @@ def api_events_list():
     except Exception as e:
         logger.exception("Ошибка чтения событий")
         return jsonify({"error": str(e), "events": []}), 500
+
+    # Если фильтр не задан — оставляем только события разрешённых камер
+    if not camera_id:
+        events = [
+            ev for ev in events
+            if can_access_camera(ev.get("camera_id"))
+        ]
 
     return jsonify({
         "ok": True,

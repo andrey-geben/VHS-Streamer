@@ -2,8 +2,16 @@
 Аутентификация и авторизация.
 
 Две роли:
-    - admin  — полный доступ (настройки, архив, все действия);
-    - viewer — только просмотр камер и архива.
+    - admin  — полный доступ (настройки, архив, все действия, все камеры);
+    - viewer — просмотр разрешённых камер и их архива.
+
+Разграничение доступа к камерам:
+    - В config.yaml у пользователя можно указать поле `cameras`:
+        cameras: ["*"]                   — все камеры (по умолчанию, если поле отсутствует)
+        cameras: ["cam_1", "cam_2"]      — только перечисленные
+        cameras: []                      — ни одной
+    - Для admin `cameras` игнорируется — админ видит всё.
+    - API-токен = admin (доступ ко всему).
 
 Поддерживаются два способа аутентификации:
     1. Сессия (cookie) — для веб-UI;
@@ -12,23 +20,34 @@
 from functools import wraps
 from flask import (
     session, request, redirect, url_for, jsonify,
-    current_app, abort,
+    current_app, abort, g,
 )
 
+import secrets as _secrets
+import time as _time
 
 # ----------------------------------------------------------------------
 # Проверка логина/пароля
 # ----------------------------------------------------------------------
 def _find_user(username: str, password: str) -> dict | None:
-    """Ищет пользователя в конфиге. Возвращает dict с ролью или None."""
+    """Ищет пользователя в конфиге. Возвращает dict с ролью и cameras или None."""
     cfg = current_app.config.get("APP_CONFIG", {})
     security = cfg.get("security", {})
     if not security.get("auth_enabled", True):
-        # auth выключен — считаем всех админами
-        return {"username": username or "anonymous", "role": "admin"}
+        # auth выключен — считаем всех админами (доступ ко всему)
+        return {
+            "username": username or "anonymous",
+            "role": "admin",
+            "cameras": None,
+        }
     for u in security.get("users", []):
         if u.get("username") == username and u.get("password") == password:
-            return {"username": u["username"], "role": u.get("role", "viewer")}
+            return {
+                "username": u["username"],
+                "role": u.get("role", "viewer"),
+                # None = все камеры; [] = ни одной; [id,...] = только эти
+                "cameras": u.get("cameras"),
+            }
     return None
 
 
@@ -39,26 +58,210 @@ def verify_api_token(token: str) -> bool:
     expected = security.get("api_token")
     return bool(expected) and token == expected
 
+# ----------------------------------------------------------------------
+# A.3: Web-токены для MediaMTX authMethod: http (WHEP/WebRTC из iframe)
+# ----------------------------------------------------------------------
+_MTX_TOKEN_TTL = 12 * 3600
+_mtx_tokens: dict[str, dict] = {}
+
+
+def create_mtx_token(username: str) -> str:
+    """Создаёт случайный токен для пользователя. Возвращает token (plaintext)."""
+    token = _secrets.token_urlsafe(32)
+    _mtx_tokens[token] = {
+        "username": username,
+        "expires_ts": _time.time() + _MTX_TOKEN_TTL,
+    }
+    return token
+
+
+def revoke_mtx_token(token: str) -> None:
+    """Удаляет токен (при logout)."""
+    _mtx_tokens.pop(token, None)
+
+
+def _lookup_mtx_token(token: str) -> dict | None:
+    """Возвращает запись токена или None (с проверкой срока)."""
+    rec = _mtx_tokens.get(token)
+    if not rec:
+        return None
+    if rec["expires_ts"] < _time.time():
+        _mtx_tokens.pop(token, None)
+        return None
+    return rec
+
+
+def get_mtx_token() -> str | None:
+    """Текущий токен из сессии (для шаблонов, шаг A.4)."""
+    return session.get("mtx_token")
+
+
+def _get_user_entry(username: str) -> dict | None:
+    """Сырая запись пользователя из config.yaml.security.users."""
+    cfg = current_app.config.get("APP_CONFIG", {})
+    for u in cfg.get("security", {}).get("users", []):
+        if u.get("username") == username:
+            return u
+    return None
+
+
+def _role_for_username(username: str) -> str:
+    return (_get_user_entry(username) or {}).get("role", "viewer")
+
+
+def _cameras_for_username(username: str):
+    return (_get_user_entry(username) or {}).get("cameras")
+
+
+def resolve_mtx_credentials(user: str, password: str) -> dict | None:
+    """
+    Проверяет user/password, пришедшие от MediaMTX authMethod: http.
+    Возвращает dict с 'kind' или None.
+    """
+    if not user or not password:
+        return None
+
+    # 1. Web-токен (создан при login в Flask)
+    rec = _lookup_mtx_token(password)
+    if rec and rec["username"] == user:
+        return {
+            "kind": "web_token",
+            "username": user,
+            "role": _role_for_username(user),
+            "cameras": _cameras_for_username(user),
+        }
+
+    # 2. Stream password (vhs_<stream_id>:<read_password>)
+    if user.startswith("vhs_"):
+        stream_id = user[len("vhs_"):]
+        cfg = current_app.config.get("APP_CONFIG", {})
+        for s in cfg.get("streams", []):
+            if (
+                s.get("id") == stream_id
+                and s.get("enabled", True)
+                and s.get("read_password") == password
+            ):
+                return {
+                    "kind": "stream_password",
+                    "username": user,
+                    "stream_id": stream_id,
+                    "stream_path": s.get("path"),
+                    "camera_id": s.get("camera_id"),
+                    "role": "viewer",
+                    "cameras": None,
+                }
+        return None
+
+    # 3. Обычный пользователь из config.yaml
+    found = _find_user(user, password)
+    if found:
+        return {"kind": "config_user", **found}
+    return None
+
+# ----------------------------------------------------------------------
+# Хелперы разграничения доступа к камерам
+# ----------------------------------------------------------------------
+def get_user_cameras(user: dict | None) -> list[str] | None:
+    """
+    Возвращает список разрешённых камер для пользователя:
+        None       — доступ ко всем камерам;
+        []         — ни к одной;
+        [id1, id2] — только к перечисленным.
+
+    Логика:
+        - admin → None (всегда все);
+        - поле `cameras` отсутствует → None (обратная совместимость);
+        - `cameras` не список → None (защита от опечаток в config);
+        - в списке есть "*" → None (все);
+        - иначе — список ID.
+    """
+    if not user:
+        return None
+    if user.get("role") == "admin":
+        return None
+    cams = user.get("cameras")
+    if cams is None:
+        return None  # поля нет — все камеры (обратная совместимость)
+    if not isinstance(cams, list):
+        return None
+    if "*" in cams:
+        return None
+    return [str(c) for c in cams if c]
+
+
+def can_access_camera(cam_id: str, user: dict | None = None) -> bool:
+    """
+    Проверяет, разрешён ли пользователю доступ к камере `cam_id`.
+    Если user не передан — берётся текущий g.user.
+    """
+    if user is None:
+        user = getattr(g, "user", None)
+    if not user:
+        return False
+    if user.get("role") == "admin":
+        return True
+    cams = get_user_cameras(user)
+    if cams is None:
+        return True
+    return str(cam_id) in cams
+
+
+def can_access_all(user: dict | None = None) -> bool:
+    """True, если пользователь имеет доступ ко всем камерам."""
+    if user is None:
+        user = getattr(g, "user", None)
+    if not user:
+        return False
+    if user.get("role") == "admin":
+        return True
+    return get_user_cameras(user) is None
+
+
+def _refresh_from_config(user: dict) -> dict:
+    """
+    Обновляет role и cameras из config.yaml по username.
+    Нужно, чтобы изменения в config.yaml (без перелогина) применялись
+    при следующем запросе — например, если админ урезал пользователю
+    список камер.
+    """
+    cfg = current_app.config.get("APP_CONFIG", {})
+    security = cfg.get("security", {})
+    if not security.get("auth_enabled", True):
+        return user
+    username = user.get("username")
+    if not username or username in ("api", "anonymous"):
+        return user
+    for u in security.get("users", []):
+        if u.get("username") == username:
+            return {
+                "username": u["username"],
+                "role": u.get("role", "viewer"),
+                "cameras": u.get("cameras"),
+            }
+    # Пользователь удалён из config — оставляем сессию как есть,
+    # но пометить его невалидным должен вызывающий код (сейчас не делаем).
+    return user
+
 
 # ----------------------------------------------------------------------
 # Внутренний хелпер: определить текущего пользователя
 # ----------------------------------------------------------------------
 def _current_user() -> dict | None:
-    """Возвращает {'username':..., 'role':...} или None."""
+    """Возвращает {'username':..., 'role':..., 'cameras':...} или None."""
     cfg = current_app.config.get("APP_CONFIG", {})
     security = cfg.get("security", {})
     if not security.get("auth_enabled", True):
-        return {"username": "anonymous", "role": "admin"}
+        return {"username": "anonymous", "role": "admin", "cameras": None}
 
-    # API-токен
+    # API-токен → admin (доверенный системный клиент)
     token = request.headers.get("X-API-Token") or request.args.get("token")
     if token and verify_api_token(token):
-        return {"username": "api", "role": "admin"}
+        return {"username": "api", "role": "admin", "cameras": None}
 
     # Сессия
     user = session.get("user")
     if user:
-        return user
+        return _refresh_from_config(user)
     return None
 
 
@@ -79,8 +282,6 @@ def login_required(f):
             ):
                 return jsonify({"error": "unauthorized"}), 401
             return redirect(url_for("login", next=request.path))
-        # Сохраним пользователя в g-подобной структуре через flask.g
-        from flask import g
         g.user = user
         return f(*args, **kwargs)
     return wrapper
@@ -90,7 +291,6 @@ def admin_required(f):
     @wraps(f)
     @login_required
     def wrapper(*args, **kwargs):
-        from flask import g
         if getattr(g, "user", {}).get("role") != "admin":
             abort(403)
         return f(*args, **kwargs)
@@ -107,10 +307,15 @@ def do_login(username: str, password: str) -> bool:
         return False
     session["user"] = user
     session.permanent = True
+    # A.3: токен для MediaMTX (WHEP в iframe, шаг A.4)
+    session["mtx_token"] = create_mtx_token(username)
     return True
 
 
 def do_logout():
+    token = session.pop("mtx_token", None)
+    if token:
+        revoke_mtx_token(token)
     session.pop("user", None)
 
 

@@ -2,8 +2,17 @@
 {% block title %}Камеры — VHS-Streamer{% endblock %}
 {% block content %}
 
-<div class="card" style="padding:12px 16px">
-    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; font-size:0.9em">
+<div class="card" style="padding:12px 16px" id="summary-bar">
+    <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; font-size:0.9em">
+
+        {% if user and user.role == 'admin' %}
+        <div title="Загрузка CPU">CPU: <b id="mon-cpu-val">—</b></div>
+        <div title="Использование RAM">RAM: <b id="mon-ram-val">—</b></div>
+        <div id="mon-disks-inline" title="Заполнение дисков">Диски: —</div>
+        <div id="mon-gpu-inline" title="Загрузка GPU / VRAM">GPU: —</div>
+        <span style="color:#2a2f37">│</span>
+        {% endif %}
+
         <div>Камер: <b>{{ sysinfo.cameras_online }}/{{ sysinfo.cameras_total }}</b></div>
         <div>Рекордеров: <b>{{ sysinfo.recorders }}</b></div>
         <div>Архив: <b>{{ sysinfo.archive_size }}</b></div>
@@ -17,30 +26,6 @@
         <div class="muted" style="margin-left:auto; font-size:0.85em">
             WebRTC-плеер через MediaMTX
         </div>
-    </div>
-</div>
-
-<!-- ============= СИСТЕМНЫЙ МОНИТОРИНГ ============= -->
-<div class="mon-grid" id="mon-grid">
-    <div class="mon-card">
-        <div class="mon-title">CPU</div>
-        <div class="mon-big" id="mon-cpu-val">—</div>
-        <div class="mon-bar"><div class="mon-bar-fill" id="mon-cpu-bar" style="width:0%"></div></div>
-        <div class="mon-sub" id="mon-cpu-sub">—</div>
-    </div>
-    <div class="mon-card">
-        <div class="mon-title">RAM</div>
-        <div class="mon-big" id="mon-ram-val">—</div>
-        <div class="mon-bar"><div class="mon-bar-fill" id="mon-ram-bar" style="width:0%"></div></div>
-        <div class="mon-sub" id="mon-ram-sub">—</div>
-    </div>
-    <div class="mon-card">
-        <div class="mon-title">Диски</div>
-        <div id="mon-disks-list" class="mon-list">—</div>
-    </div>
-    <div class="mon-card">
-        <div class="mon-title">GPU</div>
-        <div id="mon-gpu-list" class="mon-list">—</div>
     </div>
 </div>
 
@@ -77,10 +62,10 @@
              onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
              title="Клик — полный экран">
             <iframe class="cam-iframe"
-                    src="http://{{ request.host.split(':')[0] }}:8889/__raw_{{ cam.id }}/"
-                    allow="autoplay; fullscreen"
-                    scrolling="no"
-                    frameborder="0"></iframe>
+        src="http://{{ request.host.split(':')[0] }}:8889/__raw_{{ cam.id }}/{% if mtx_token %}?user={{ mtx_user|urlencode }}&pass={{ mtx_token|urlencode }}{% endif %}"
+        allow="autoplay; fullscreen"
+        scrolling="no"
+        frameborder="0"></iframe>
 
             <div class="cam-ptz-panel"
                  id="ptz-panel-{{ cam.id }}"
@@ -739,8 +724,22 @@
 </style>
 
 <script>
+// A.4: креды для MediaMTX authMethod: http (WHEP из iframe и fullscreen)
+window.VHS_MTX_USER = {{ mtx_user|tojson }};
+window.VHS_MTX_PASS = {{ mtx_token|tojson }};
+
 const SERVER_HOST = window.location.hostname;
 const WEBRTC_PORT = 8889;
+
+function _mtxUrl(cameraId) {
+    let url = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT +
+              '/__raw_' + encodeURIComponent(cameraId) + '/';
+    if (window.VHS_MTX_USER && window.VHS_MTX_PASS) {
+        url += '?user=' + encodeURIComponent(window.VHS_MTX_USER) +
+               '&pass=' + encodeURIComponent(window.VHS_MTX_PASS);
+    }
+    return url;
+}
 
 let _ptzCapabilities = {};
 let _ptzMoveLock = {};
@@ -754,8 +753,7 @@ function openFullscreen(cameraId, cameraName) {
     const iframe = document.getElementById('fs-iframe');
     document.getElementById('fs-title').textContent = cameraName || cameraId;
 
-    iframe.src = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT +
-                 '/__raw_' + encodeURIComponent(cameraId) + '/';
+    iframe.src = _mtxUrl(cameraId);
 
     _fsCameraId = cameraId;
 
@@ -1436,6 +1434,9 @@ function _monEscape(s) {
 }
 
 async function refreshSystemStats() {
+    // Не-админ не видит панель → выходим без fetch (нет элемента mon-cpu-val)
+    if (!document.getElementById('mon-cpu-val')) return;
+
     try {
         const r = await fetch('/api/system/stats');
         if (!r.ok) return;
@@ -1444,100 +1445,64 @@ async function refreshSystemStats() {
         // --- CPU ---
         const cpuPct = d.cpu && d.cpu.percent;
         const cpuVal = document.getElementById('mon-cpu-val');
-        const cpuBar = document.getElementById('mon-cpu-bar');
-        const cpuSub = document.getElementById('mon-cpu-sub');
         if (cpuVal) {
-            cpuVal.textContent = (cpuPct == null) ? '—' :
-                Math.round(cpuPct) + '%';
-        }
-        if (cpuBar) {
-            cpuBar.style.width = Math.max(0, Math.min(100, cpuPct || 0)) + '%';
-            cpuBar.style.background = _monColor(cpuPct);
-        }
-        if (cpuSub && d.cpu) {
-            const parts = [];
-            if (d.cpu.cores_logical) {
-                parts.push(d.cpu.cores_logical + ' ядер');
-            }
-            if (d.cpu.freq_mhz) {
-                parts.push(d.cpu.freq_mhz + ' МГц');
-            }
-            cpuSub.textContent = parts.join(' · ') || '—';
+            cpuVal.textContent = (cpuPct == null) ? '—' : Math.round(cpuPct) + '%';
+            cpuVal.style.color = _monColor(cpuPct);
         }
 
         // --- RAM ---
         const ramPct = d.ram && d.ram.percent;
         const ramVal = document.getElementById('mon-ram-val');
-        const ramBar = document.getElementById('mon-ram-bar');
-        const ramSub = document.getElementById('mon-ram-sub');
         if (ramVal) {
+            const usedGb = (d.ram && d.ram.used_mb || 0) / 1024;
+            const totalGb = (d.ram && d.ram.total_mb || 0) / 1024;
             ramVal.textContent = (ramPct == null) ? '—' :
-                Math.round(ramPct) + '%';
-        }
-        if (ramBar) {
-            ramBar.style.width = Math.max(0, Math.min(100, ramPct || 0)) + '%';
-            ramBar.style.background = _monColor(ramPct);
-        }
-        if (ramSub && d.ram) {
-            const usedGb = (d.ram.used_mb || 0) / 1024;
-            const totalGb = (d.ram.total_mb || 0) / 1024;
-            ramSub.textContent = usedGb.toFixed(1) + ' / ' +
-                totalGb.toFixed(1) + ' ГБ';
+                (Math.round(ramPct) + '% (' + usedGb.toFixed(1) + '/' +
+                 totalGb.toFixed(1) + ' ГБ)');
+            ramVal.style.color = _monColor(ramPct);
         }
 
         // --- Диски ---
-        const disksBox = document.getElementById('mon-disks-list');
+        const disksBox = document.getElementById('mon-disks-inline');
         if (disksBox) {
-            if (d.disks && d.disks.length > 0) {
-                disksBox.innerHTML = d.disks.map(dk => {
-                    const c = _monColor(dk.percent);
-                    const label = _monEscape(dk.label || dk.mount || '?');
-                    const pct = (dk.percent == null) ? 0 : dk.percent;
-                    return '<div class="mon-list-item">' +
-                        '<span class="name" title="' + label + '">' + label + '</span>' +
-                        '<span class="val" style="color:' + c + '">' +
-                            Math.round(pct) + '%</span>' +
-                        '</div>' +
-                        '<div class="mon-mini-bar"><div style="width:' +
-                            Math.max(0, Math.min(100, pct)) + '%; background:' +
-                            c + '"></div></div>' +
-                        '<div class="mon-sub" style="margin-top:0; margin-bottom:2px">' +
-                            (dk.used_gb || 0) + ' / ' + (dk.total_gb || 0) +
-                            ' ГБ</div>';
-                }).join('');
+            const disks = (d.disks || []);
+            if (disks.length === 0) {
+                disksBox.innerHTML = 'Диски: —';
             } else {
-                disksBox.innerHTML = '<div class="muted" style="font-size:0.85em">—</div>';
+                const parts = disks.map(dk => {
+                    const label = _monEscape(dk.label || dk.mount || '?');
+                    const pct = (dk.percent == null) ? 0 : Math.round(dk.percent);
+                    const c = _monColor(dk.percent);
+                    return label + ': <b style="color:' + c + '">' + pct + '%</b>';
+                });
+                disksBox.innerHTML = 'Диски: ' + parts.join(' · ');
             }
         }
 
         // --- GPU ---
-        const gpuBox = document.getElementById('mon-gpu-list');
+        const gpuBox = document.getElementById('mon-gpu-inline');
         if (gpuBox) {
-            if (d.gpu && d.gpu.length > 0) {
-                gpuBox.innerHTML = d.gpu.map(g => {
-                    const util = g.utilization_percent;
-                    const utilStr = (util == null) ? '—' :
-                        Math.round(util) + '%';
-                    const utilColor = _monColor(util);
-                    const vramStr = g.vram_mb ?
-                        (g.vram_mb / 1024).toFixed(1) + ' ГБ' : '—';
-                    const name = _monEscape(g.name || 'GPU');
-                    return '<div class="mon-list-item">' +
-                        '<span class="name" title="' + name + '">' + name + '</span>' +
-                        '<span class="val" style="color:' + utilColor + '">' +
-                            utilStr + '</span>' +
-                        '</div>' +
-                        '<div class="mon-sub" style="margin-top:0; margin-bottom:4px">' +
-                            'VRAM: ' + vramStr + '</div>';
-                }).join('');
-            } else if (d.gpu_ready) {
-                gpuBox.innerHTML = '<div class="muted" style="font-size:0.85em">не найдено</div>';
+            const gpus = (d.gpu || []);
+            if (gpus.length === 0) {
+                if (d.gpu_ready) {
+                    gpuBox.innerHTML = 'GPU: <span class="muted">не найдено</span>';
+                } else {
+                    gpuBox.innerHTML = 'GPU: <span class="muted">загрузка...</span>';
+                }
             } else {
-                gpuBox.innerHTML = '<div class="muted" style="font-size:0.85em">загрузка...</div>';
+                const parts = gpus.map(g => {
+                    const name = _monEscape((g.name || 'GPU')
+                        .replace(/\(R\)/g, '').replace(/\(TM\)/g, '').trim());
+                    const util = g.utilization_percent;
+                    const utilStr = (util == null) ? '—' : (Math.round(util) + '%');
+                    const c = _monColor(util);
+                    return name + ': <b style="color:' + c + '">' + utilStr + '</b>';
+                });
+                gpuBox.innerHTML = 'GPU: ' + parts.join(' · ');
             }
         }
     } catch (e) {
-        // тихо — оставляем старые значения; UI не должен падать
+        // тихо — UI не должен падать
         console.debug('refreshSystemStats:', e);
     }
 }

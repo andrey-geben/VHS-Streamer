@@ -12,26 +12,17 @@ server:
   secret_key: "CHANGE-ME-to-a-long-random-string"
 
 network:
-  interfaces:
-    - name: eth0
-      ip: 10.0.1.10
-      description: "Сеть охраны труда"
-    - name: eth1
-      ip: 192.168.1.10
-      description: "Сеть безопасности"
-    - name: eth2
-      ip: 172.16.0.10
-      description: "Изолированная сеть"
-      network:
-        auto_detect: true
-        exclude:
-          - happ
-          - docker0
-          - virbr0
-        interfaces:
-          - name: eth0
-            ...
-
+  # Автоопределение интерфейсов (рекомендуется). Список можно задать явно:
+  # interfaces:
+  #   - name: eth0
+  #     ip: 10.0.1.10
+  #     description: "Сеть 1"
+  auto_detect: true
+  exclude:
+    - happ
+    - docker0
+    - virbr0
+  interfaces: []
 mediamtx:
   binary: "./bin/mediamtx.exe"
   config: "./mediamtx.yml"
@@ -85,21 +76,15 @@ archive:
   extension: ".mp4"
   record_all: true
 
-cameras:
-  - id: ip_1
-    name: "IP камера — Вход"
-    type: ip
-    source: "rtsp://user:pass@192.168.1.100:554/stream1"
-    fps: 25
-    width: 1280
-    height: 720
-    record: true
-    transport: "tcp"
-    open_timeout_ms: 5000
-    read_timeout_ms: 5000
-    # --- Аудио ---
-    has_audio: null      # заполняется автоматически при проверке
-    audio: false         # захватывать звук (только если has_audio: true)
+# Камеры добавляются в интерфейсе (Настройки → Камеры) или списком ниже.
+# Пример записи:
+# cameras:
+#   - id: ip_1
+#     name: "IP камера"
+#     type: ip
+#     source: "rtsp://user:pass@192.168.1.100:554/stream1"
+#     transport: "tcp"
+cameras: []
 
 streams: []
 

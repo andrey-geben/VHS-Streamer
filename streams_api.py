@@ -397,7 +397,22 @@ def _ensure_raw_path(camera, mediamtx, helpers):
         pass
 
     cfg = helpers["build_raw_path_config"](camera)
-    mediamtx.add_path(raw, cfg)
+    # ------------ подсказка -----------------
+    # Если MediaMTX упал (порт занят, чужой путь в конфиге), add_path бросает
+    # ConnectionError и весь запрос падает 500. Пробуем поднять заново.
+    try:
+        mediamtx.add_path(raw, cfg)
+    except Exception as exc:
+        logger.warning("[%s] raw-путь не применён (%s) — перезапускаю MediaMTX",
+                       camera.id, exc)
+        try:
+            if mediamtx.restart():
+                mediamtx.add_path(raw, cfg)
+                logger.info("[%s] raw-путь применён после перезапуска", camera.id)
+            else:
+                logger.error("[%s] MediaMTX не поднялся — путь не создан", camera.id)
+        except Exception as exc2:
+            logger.error("[%s] путь не создан и после перезапуска: %s", camera.id, exc2)
 
 
 # ----------------------------------------------------------------------

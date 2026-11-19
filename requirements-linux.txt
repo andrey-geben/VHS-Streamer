@@ -1,0 +1,8 @@
+# Зависимости для Linux/ARM (Jetson).
+# OpenCV ставится системным пакетом python3-opencv (см. install_jetson.sh),
+# поэтому здесь его нет: колёс под aarch64 может не быть.
+Flask==3.0.3
+Werkzeug==3.0.3
+PyYAML==6.0.2
+requests==2.32.3
+psutil==6.0.0

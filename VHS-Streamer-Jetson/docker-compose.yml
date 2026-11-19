@@ -1,0 +1,33 @@
+version: "3.8"
+
+# =====================================================================
+#  VHS-Streamer на NVIDIA Jetson — docker-compose
+# ---------------------------------------------------------------------
+#  network_mode: host обязателен: MediaMTX и WebRTC поднимают много
+#  портов (8000, 8081, 8554, 8889, 8189/udp, 8080), а WebRTC ICE плохо
+#  работает через NAT Docker.
+#
+#  Запуск:
+#      docker compose up -d --build
+#      docker compose logs -f
+#      docker compose down
+# =====================================================================
+services:
+  vhs-streamer:
+    build:
+      context: ..
+      dockerfile: VHS-Streamer-Jetson/Dockerfile
+    image: vhs-streamer:jetson
+    container_name: vhs-streamer
+    restart: unless-stopped
+    network_mode: host
+    working_dir: /app
+    # чтобы файлы в примонтированной папке принадлежали вашему
+    # пользователю Jetson (обычно uid=1000), а не root
+    user: "${VHS_UID:-1000}:${VHS_GID:-1000}"
+    environment:
+      TZ: Asia/Yekaterinburg
+    volumes:
+      # каталог проекта целиком: config.yaml, archive/, logs/, events.db
+      # остаются на диске Jetson и переживают пересоздание контейнера
+      - ..:/app

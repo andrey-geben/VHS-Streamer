@@ -1,59 +1,72 @@
 #!/bin/bash
 # =====================================================================
-#  Скрипт запуска VHS-Streamer на Jetson
+#  Скрипт запуска VHS-Streamer в контейнере на Jetson
+# ---------------------------------------------------------------------
+#  1. Проверяет Python/FFmpeg и доступные аппаратные кодеки.
+#  2. Готовит config.yaml и bin/ (MediaMTX arm64, ссылки на ffmpeg).
+#  3. Запускает приложение.
 # =====================================================================
 set -e
 
 echo "=============================================="
-echo "  VHS-Streamer на Jetson"
+echo "  VHS-Streamer на Jetson (Docker)"
 echo "=============================================="
-echo ""
+echo
 
-# ---------- Проверка Python ----------
-echo "[*] Проверяю Python..."
-python3 --version
-echo ""
+# ---------- Python ----------
+echo "[*] Python: $(python3 --version 2>&1)"
+python3 -c 'import cv2; print("[*] OpenCV:", cv2.__version__)' || {
+    echo "[!] OpenCV не найден. Установите: apt install python3-opencv"
+    exit 1
+}
 
-# ---------- Проверка доступных аппаратных кодеков ----------
-echo "[*] Проверяю доступные H264-кодеки FFmpeg..."
-
-# Проверяем наличие nvv4l2h264enc (специфичный для Jetson)
+# ---------- Аппаратные кодеки ----------
+echo "[*] Проверяю H264-кодеки FFmpeg..."
+JETSON_ENCODER="libx264"
 if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q "nvv4l2h264enc"; then
     JETSON_ENCODER="nvv4l2h264enc"
-    echo "    Найден Jetson-энкодер: $JETSON_ENCODER"
 elif ffmpeg -hide_banner -encoders 2>/dev/null | grep -q "h264_nvenc"; then
     JETSON_ENCODER="h264_nvenc"
-    echo "    Найден NVENC-энкодер: $JETSON_ENCODER"
 elif ffmpeg -hide_banner -encoders 2>/dev/null | grep -q "h264_v4l2m2m"; then
     JETSON_ENCODER="h264_v4l2m2m"
-    echo "    Найден V4L2-энкодер: $JETSON_ENCODER"
-else
-    JETSON_ENCODER="libx264"
-    echo "    Аппаратные кодеки не найдены, использую libx264 (CPU)"
+fi
+echo "    Использую: $JETSON_ENCODER"
+export VHS_JETSON_ENCODER="$JETSON_ENCODER"
+
+# ---------- config.yaml ----------
+if [ ! -f /app/config.yaml ]; then
+    echo "[*] Создаю config.yaml из примера"
+    cp /app/config.example.yaml /app/config.yaml
+    echo "    Пароль администратора будет сгенерирован при первом запуске."
 fi
 
-# ---------- Сохранение кодека в переменную окружения ----------
-export VHS_JETSON_ENCODER="$JETSON_ENCODER"
-echo ""
+# ---------- ffmpeg рядом с программой ----------
+mkdir -p /app/bin
+[ -x /app/bin/ffmpeg ]  || ln -sf "$(command -v ffmpeg)"  /app/bin/ffmpeg
+[ -x /app/bin/ffprobe ] || ln -sf "$(command -v ffprobe)" /app/bin/ffprobe
 
-# ---------- Проверка MediaMTX ----------
-if [ -f "/app/bin/mediamtx" ]; then
-    echo "[*] MediaMTX найден: /app/bin/mediamtx"
-else
-    echo "[!] MediaMTX не найден в /app/bin/mediamtx"
-    echo "    Скачайте его или проверьте Dockerfile."
+# ---------- MediaMTX (arm64) ----------
+if [ ! -x /app/bin/mediamtx ]; then
+    echo "[*] MediaMTX не найден — скачиваю arm64-сборку..."
+    cd /app
+    python3 - <<'PY'
+from bootstrap import ensure_all
+print("    bootstrap:", ensure_all())
+PY
+fi
+
+if [ ! -x /app/bin/mediamtx ]; then
+    echo "[!] MediaMTX не установлен. Без интернета положите bin/mediamtx вручную:"
+    echo "    https://github.com/bluenviron/mediamtx/releases (linux_arm64v8)"
     exit 1
 fi
-echo ""
 
-# ---------- Запуск сервера ----------
+echo
 echo "[*] Запускаю VHS-Streamer..."
-echo "    Web-интерфейс: http://0.0.0.0:8000"
-echo "    RTSP:          rtsp://0.0.0.0:8554"
-echo "    WebRTC:        http://0.0.0.0:8889"
-echo ""
+echo "    Панель: http://0.0.0.0:8000"
+echo "    RTSP:   rtsp://0.0.0.0:8554"
+echo "    WebRTC: http://0.0.0.0:8889"
+echo
 
-# Запускаем основной процесс (Python)
-# Если нужно передать кодек в приложение, можно использовать переменную окружения,
-# которую мы добавим в код позже.
+cd /app
 exec python3 app.py

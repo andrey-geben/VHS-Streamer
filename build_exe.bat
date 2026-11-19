@@ -52,8 +52,8 @@ REM Конфиг — всегда внешний
 if exist config.example.yaml (
     copy /Y config.example.yaml "%OUTDIR%\config.example.yaml" >nul
 )
-if exist config.yaml (
-    copy /Y config.yaml "%OUTDIR%\config.yaml" >nul
+if exist "%OUTDIR%\config.yaml" (
+    echo [i] config.yaml already exists in dist - keeping it (no secrets overwrite)
 ) else (
     echo [i] config.yaml не найден — копирую из config.example.yaml
     copy /Y config.example.yaml "%OUTDIR%\config.yaml" >nul
@@ -76,6 +76,7 @@ copy /Y dist_scripts\start.bat   "%OUTDIR%\start.bat"   >nul 2>&1
 copy /Y dist_scripts\stop.bat    "%OUTDIR%\stop.bat"    >nul 2>&1
 copy /Y dist_scripts\status.bat  "%OUTDIR%\status.bat"  >nul 2>&1
 copy /Y dist_scripts\restart.bat "%OUTDIR%\restart.bat" >nul 2>&1
+copy /Y dist_scripts\reset_auth.bat "%OUTDIR%\reset_auth.bat" >nul 2>&1
 
 echo.
 echo ============================================

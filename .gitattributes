@@ -1,0 +1,12 @@
+# Скрипты Linux/ARM должны иметь LF, иначе на Jetson будет ошибка
+# "bad interpreter: /usr/bin/env bash^M".
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+Dockerfile* text eol=lf
+*.yml text eol=lf
+.dockerignore text eol=lf
+Dockerfile* text eol=lf
+*.txt text eol=lf

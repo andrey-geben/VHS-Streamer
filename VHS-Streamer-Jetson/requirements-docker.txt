@@ -1,0 +1,9 @@
+# Зависимости для Docker-образа на Debian 11 (JetPack 4 / старое ядро).
+# Здесь OpenCV ставится колесом opencv-python-headless под aarch64.
+Flask==3.0.3
+Werkzeug==3.0.3
+PyYAML==6.0.2
+requests==2.32.3
+psutil==6.0.0
+opencv-python-headless==4.10.0.84
+numpy==1.26.4

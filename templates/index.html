@@ -35,20 +35,29 @@
     {% set rec = rec_statuses.get(cam.id) %}
     <div class="cam-card" data-camera-id="{{ cam.id }}">
         <div class="cam-header">
-            <span class="cam-name" title="{{ cam.name }}">{{ cam.name }}</span>
-            <div style="display:flex; gap:6px; align-items:center">
-                {% if st.connected %}
-                    <span class="status-on" title="онлайн">●</span>
-                {% else %}
-                    <span class="status-off" title="{{ st.last_error or 'оффлайн' }}">○</span>
-                {% endif %}
-                {% if cam.type == 'ip' %}
-                    <button class="cam-ptz-btn" type="button"
+            <div class="cam-headline">
+                <span class="cam-name" title="{{ cam.name }}">{{ cam.name }}</span>
+                <span class="cam-badges">
+                    {% if st.connected %}
+                        <span class="status-on" title="онлайн">●</span>
+                    {% else %}
+                        <span class="status-off" title="{{ st.last_error or 'оффлайн' }}">○</span>
+                    {% endif %}
+                    <span class="muted">{{ cam.id }}</span>
+                    {% if rec %}
+                        <span class="muted" title="сегментов / занято в архиве">⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ</span>
+                    {% else %}
+                        <span class="muted">запись выкл.</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="cam-actions" style="display:flex; gap:6px; align-items:center">
+                <button class="cam-ptz-btn" type="button"
                             data-camera-id="{{ cam.id }}"
                             style="display:none;"
                             onclick="togglePtzPanel('{{ cam.id }}')"
                             title="PTZ-управление">🎮</button>
-                {% endif %}
+                <div class="cam-outputs" data-camera-id="{{ cam.id }}"></div>
                 <button class="cam-archive-btn" type="button"
                         onclick='openArchiveModal({{ cam.id|tojson }}, {{ cam.name|tojson }})'
                         title="Архив записей">📼</button>
@@ -59,10 +68,15 @@
         </div>
 
         <div class="cam-preview"
+             data-camera-id="{{ cam.id }}"
              onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
              title="Клик — полный экран">
+            <div class="cam-offline">
+                <span class="cam-offline__icon">📷</span>
+                <span>Нет сигнала</span>
+            </div>
             <iframe class="cam-iframe"
-        src="http://{{ request.host.split(':')[0] }}:8889/__raw_{{ cam.id }}/{% if mtx_token %}?user={{ mtx_user|urlencode }}&pass={{ mtx_token|urlencode }}{% endif %}"
+        src="/player/{{ cam.id }}"
         allow="autoplay; fullscreen"
         scrolling="no"
         frameborder="0"></iframe>
@@ -94,16 +108,6 @@
             </div>
         </div>
 
-        <div class="cam-footer">
-            <span class="muted">{{ cam.id }}</span>
-            {% if rec %}
-                <span class="muted" title="сегментов / занято в архиве">
-                    ⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ
-                </span>
-            {% else %}
-                <span class="muted">запись выкл.</span>
-            {% endif %}
-        </div>
     </div>
     {% endfor %}
 </div>
@@ -812,6 +816,93 @@ document.addEventListener('fullscreenchange', function() {
 // =====================================================================
 // PTZ
 // =====================================================================
+// =====================================================================
+// Оверлей «Нет сигнала»: прячем iframe, пока raw-путь не поднялся
+// =====================================================================
+async function refreshCameraStatus() {
+    try {
+        const r = await fetch('/api/cameras/status');
+        if (!r.ok) return;
+        const data = await r.json();
+        document.querySelectorAll('.cam-card').forEach(card => {
+            const id = card.dataset.cameraId;
+            const info = data[id];
+            const prev = card.querySelector('.cam-preview');
+            if (!prev) return;
+            // Превью — это входящий raw-путь: показываем, когда он готов,
+            // даже если наш RTSP-читатель ещё переподключается.
+            const online = !!(info && (info.raw_ready || info.connected));
+            prev.classList.toggle('is-offline', !online);
+
+
+        });
+    } catch (e) {
+        console.warn('refreshCameraStatus failed:', e);
+    }
+}
+
+
+// =====================================================================
+// Исходящие потоки (клоны): индикатор + просмотр одного
+// =====================================================================
+function _mtxPathUrl(path) {
+    let url = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT + '/' +
+              path.replace(/^\//, '') + '/';
+    if (window.VHS_MTX_USER && window.VHS_MTX_PASS) {
+        url += '?user=' + encodeURIComponent(window.VHS_MTX_USER) +
+               '&pass=' + encodeURIComponent(window.VHS_MTX_PASS);
+    }
+    return url;
+}
+
+function openPathFullscreen(path, title) {
+    const overlay = document.getElementById('fs-overlay');
+    const iframe = document.getElementById('fs-iframe');
+    document.getElementById('fs-title').textContent = title || path;
+    iframe.src = _mtxPathUrl(path);
+    _fsCameraId = null;
+    document.getElementById('fs-ptz-btn').style.display = 'none';
+    document.getElementById('fs-ptz-panel').style.display = 'none';
+    overlay.classList.add('active');
+    if (overlay.requestFullscreen) overlay.requestFullscreen().catch(() => {});
+}
+
+async function refreshStreamsStatus() {
+    try {
+        const r = await fetch('/api/streams/status');
+        if (!r.ok) return;
+        const data = await r.json();
+        const byCam = {};
+        data.forEach(st => {
+            (byCam[st.camera_id] = byCam[st.camera_id] || []).push(st);
+        });
+        document.querySelectorAll('.cam-outputs').forEach(box => {
+            const camId = box.dataset.cameraId;
+            const list = byCam[camId] || [];
+            box.innerHTML = '';
+            if (!list.length) { box.style.display = 'none'; return; }
+            box.style.display = 'flex';
+            list.forEach(st => {
+                const el = document.createElement('button');
+                el.type = 'button';
+                el.className = 'out-badge ' + (st.ready ? 'ok' : 'off');
+                el.title = st.ready
+                    ? 'Поток работает, читателей: ' + st.readers + ' — нажмите, чтобы посмотреть'
+                    : 'Поток не поднят (нет сигнала с камеры)';
+                el.textContent = (st.ready ? '● ' : '○ ') + st.path +
+                                 (st.readers ? ' · ' + st.readers : '');
+                el.onclick = (ev) => {
+                    ev.stopPropagation();
+                    openPathFullscreen(st.path, st.path);
+                };
+                box.appendChild(el);
+            });
+        });
+    } catch (e) {
+        console.warn('refreshStreamsStatus failed:', e);
+    }
+}
+
 async function loadPtzCapabilities() {
     try {
         const r = await fetch('/api/ptz/capabilities');
@@ -1511,6 +1602,10 @@ async function refreshSystemStats() {
 // Инициализация
 // =====================================================================
 (function init() {
+    setTimeout(refreshStreamsStatus, 900);
+    setInterval(refreshStreamsStatus, 5000);
+    setTimeout(refreshCameraStatus, 600);
+    setInterval(refreshCameraStatus, 5000);
     setTimeout(loadPtzCapabilities, 500);
     setTimeout(refreshSystemStats, 300);
     setInterval(refreshSystemStats, 3000);

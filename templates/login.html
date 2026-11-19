@@ -3,32 +3,138 @@
 <head>
     <meta charset="utf-8">
     <title>Вход — VHS-Streamer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=4">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('vhs-theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+            } catch (e) {}
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/css/theme.css?v=2">
     <style>
-        body { margin:0; font-family:Arial, sans-serif; background:#14161a; color:#e8e8e8;
-               display:flex; align-items:center; justify-content:center; height:100vh; }
-        .box { background:#1e2126; padding:32px 36px; border-radius:10px;
-               border:1px solid #2a2f37; min-width:340px; }
-        h1 { margin:0 0 20px; color:#4da3ff; font-size:1.4em; text-align:center; }
-        label { display:block; margin-bottom:6px; color:#8b96a5; font-size:0.9em; }
-        input { width:100%; padding:10px; background:#14161a; border:1px solid #2a2f37;
-                border-radius:4px; color:#e8e8e8; margin-bottom:14px; font-size:1em; }
-        button { width:100%; padding:11px; background:#2a6df4; color:#fff; border:none;
-                 border-radius:4px; cursor:pointer; font-size:1em; }
-        button:hover { background:#1e5bd8; }
-        .err { color:#f16a6a; text-align:center; margin-bottom:12px; }
+        body {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+        .auth {
+            width: 100%;
+            max-width: 384px;
+            background: linear-gradient(180deg, #171d26 0%, #12171f 100%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px 28px 24px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+        }
+        .auth__logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+        .auth__mark {
+            width: 36px; height: 36px;
+            display: grid; place-items: center;
+            border-radius: 10px;
+            background: var(--accent-soft);
+            border: 1px solid rgba(91, 140, 255, 0.35);
+            font-size: 1.05rem;
+        }
+        .auth h1 {
+            margin: 0;
+            font-size: 1.12rem;
+            font-weight: 650;
+            letter-spacing: 0.2px;
+        }
+        .auth__sub {
+            margin: 0 0 22px;
+            color: var(--text-mute);
+            font-size: 0.85rem;
+        }
+        .auth label {
+            display: block;
+            margin: 0 0 6px;
+            font-size: 0.82rem;
+            color: var(--text-dim);
+        }
+        .auth input {
+            width: 100%;
+            margin-bottom: 14px;
+            padding: 11px 12px;
+            font-size: 0.95rem;
+        }
+        .auth button {
+            width: 100%;
+            margin-top: 4px;
+            padding: 11px 16px;
+        }
+        .auth__err {
+            margin-bottom: 14px;
+            padding: 9px 12px;
+            border-radius: 9px;
+            background: rgba(239, 91, 91, 0.12);
+            border: 1px solid rgba(239, 91, 91, 0.4);
+            color: #ffb4b4;
+            font-size: 0.86rem;
+        }
+        .auth__foot {
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border-soft);
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-mute);
+            font-size: 0.76rem;
+        }
     </style>
 </head>
 <body>
-<div class="box">
-    <h1>VHS-Streamer</h1>
-    {% if error %}<div class="err">{{ error }}</div>{% endif %}
-    <form method="post">
-        <label>Логин</label>
-        <input name="username" autofocus required>
-        <label>Пароль</label>
-        <input name="password" type="password" required>
-        <button type="submit">Войти</button>
-    </form>
-</div>
+<form class="auth" method="post">
+    <div class="auth__logo">
+        <span class="auth__mark">🎥</span>
+        <h1>VHS-Streamer</h1>
+    </div>
+    <p class="auth__sub">Рестример камер и ONVIF-прокси</p>
+
+    {% if error %}<div class="auth__err">{{ error }}</div>{% endif %}
+
+    <label for="username">Логин</label>
+    <input id="username" name="username" autofocus required autocomplete="username">
+
+    <label for="password">Пароль</label>
+    <input id="password" name="password" type="password" required autocomplete="current-password">
+
+    <button type="submit" class="btn">Войти</button>
+
+    <button type="button" class="theme-toggle" id="login-theme"
+            style="position:absolute; top:14px; right:14px;"
+            title="Переключить тему">🌙</button>
+    <div class="auth__foot">
+        <span>{{ version|default('') }}</span>
+        <span>Локальная сеть</span>
+    </div>
+</form>
+<script>
+    (function () {
+        var btn = document.getElementById('login-theme');
+        if (!btn) return;
+        function sync() {
+            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            btn.textContent = cur === 'light' ? '☀️' : '🌙';
+        }
+        sync();
+        btn.addEventListener('click', function () {
+            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            var next = cur === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', next);
+            try { localStorage.setItem('vhs-theme', next); } catch (e) {}
+            sync();
+        });
+    })();
+</script>
 </body>
 </html>

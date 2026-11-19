@@ -309,15 +309,42 @@ class MediaMTXManager:
         except Exception as e:
             logger.debug("Поток чтения stdout MediaMTX остановлен: %s", e)
 
+
+    def is_alive(self) -> bool:
+        """Жив ли процесс MediaMTX."""
+        return bool(self.process) and self.process.poll() is None
+
+    def restart(self) -> bool:
+        """Перезапуск после падения. True — удалось поднять."""
+        try:
+            self.stop()
+        except Exception:
+            pass
+        try:
+            self.start()
+            return True
+        except Exception as e:
+            logger.error("MediaMTX не перезапустился: %s", e)
+            return False
+
     def stop(self):
         if not self.process:
             return
         logger.info("Останавливаю MediaMTX")
-        self.process.terminate()
+        # У MediaMTX есть дочерние ffmpeg (runOnInit-публикаторы).
+        # Гасим всё дерево, иначе они остаются висеть после остановки.
         try:
-            self.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
+            from proc_tree import kill_tree
+            kill_tree(self.process.pid)
+        except Exception:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
         self.process = None
 
     def add_path(self, name: str, config: dict):

@@ -1,7 +1,7 @@
 // VHS-Streamer Service Worker
 // Кэширует только статику. Никогда: API, WebRTC, архив, internal.
 
-const CACHE_NAME = 'vhs-streamer-v1';
+const CACHE_NAME = 'vhs-streamer-v2';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/static/icons/icon-192.png',

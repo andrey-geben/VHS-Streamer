@@ -11,6 +11,15 @@
     <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=4">
     <link rel="apple-touch-icon" href="/favicon.ico?v=4">
+    <script>
+        // Тема до отрисовки — чтобы не мигало белым/тёмным
+        (function () {
+            try {
+                var t = localStorage.getItem('vhs-theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+            } catch (e) {}
+        })();
+    </script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -70,14 +79,15 @@
         }
         .toast.err { background: #b13a3a; }
     </style>
+    <link rel="stylesheet" href="/static/css/theme.css?v=7">
 </head>
 <body>
 <header>
     <div class="brand">🎥 VHS-Streamer</div>
     <nav>
-        <a href="{{ url_for('index') }}">Камеры</a>
-        <a href="{{ url_for('archive_page') }}">Архив</a>
-        <a href="{{ url_for('events_page') }}">
+        <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Камеры</a>
+        <a href="{{ url_for('archive_page') }}" class="{% if request.endpoint == 'archive_page' %}active{% endif %}">Архив</a>
+        <a href="{{ url_for('events_page') }}" class="{% if request.endpoint == 'events_page' %}active{% endif %}">
         События
          <span id="menu-events-count"
           style="display:none;
@@ -87,13 +97,15 @@
                  line-height:1.6em;"></span>
         </a>
         {% if user and user.role == 'admin' %}
-        <a href="{{ url_for('settings.settings_page') }}">Настройки</a>
+        <a href="{{ url_for('settings.settings_page') }}" class="{% if request.endpoint == 'settings.settings_page' %}active{% endif %}">Настройки</a>
         <a href="{{ url_for('api_status') }}">API</a>
         {% endif %}
                 {% if user %}
             <span class="user">{{ user.username }} ({{ user.role }})</span>
             <a href="{{ url_for('logout') }}">Выход</a>
         {% endif %}
+        <button id="theme-toggle" class="theme-toggle" type="button"
+                title="Переключить тему (тёмная / светлая)">🌙</button>
         <button id="pwa-install-btn" type="button"
                 style="display:none; background:#2a6df4; color:#fff;
                        border:none; border-radius:4px; padding:6px 10px;
@@ -111,6 +123,24 @@
 <div class="toast" id="global-toast"></div>
 <script>
     // Простой тостик для уведомлений
+    // Переключатель темы
+    (function () {
+        var btn = document.getElementById('theme-toggle');
+        if (!btn) return;
+        function sync() {
+            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            btn.textContent = cur === 'light' ? '☀️' : '🌙';
+        }
+        sync();
+        btn.addEventListener('click', function () {
+            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            var next = cur === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', next);
+            try { localStorage.setItem('vhs-theme', next); } catch (e) {}
+            sync();
+        });
+    })();
+
     function showToast(text, isError) {
         const el = document.getElementById('global-toast');
         el.textContent = text;

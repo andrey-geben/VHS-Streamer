@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ cam_name }} — VHS-Streamer</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #0a0d12;
+            color: #93a1b5;
+            font-family: "Segoe UI", system-ui, Arial, sans-serif;
+            overflow: hidden;
+        }
+        .wrap { position: relative; width: 100%; height: 100%; }
+        .frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
+        .offline {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 14px;
+            letter-spacing: .2px;
+        }
+        .offline .icon { font-size: 30px; opacity: .5; }
+        .wrap.online .frame { display: block; }
+        .wrap.online .offline { display: none; }
+    </style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+    <div class="offline" id="offline">
+        <span class="icon">📷</span>
+        <span>Нет сигнала</span>
+    </div>
+    <iframe class="frame" id="frame" allow="autoplay; fullscreen" scrolling="no"></iframe>
+</div>
+<script>
+    // Плеер сам решает, что показать: пока входящий raw-путь не готов —
+    // «Нет сигнала». MediaMTX грузим только когда путь реально есть,
+    // иначе он отдаёт JSON-ошибку прямо в кадр.
+    const STREAM_URL = {{ stream_url|tojson }};
+    const STATUS_URL = '/api/cameras/status?ids=' + encodeURIComponent({{ cam_id|tojson }});
+    const wrap = document.getElementById('wrap');
+    const frame = document.getElementById('frame');
+
+    async function tick() {
+        let ready = false;
+        try {
+            const r = await fetch(STATUS_URL, { cache: 'no-store' });
+            if (r.ok) {
+                const data = await r.json();
+                const info = data[{{ cam_id|tojson }}] || {};
+                ready = !!(info.raw_ready || info.connected);
+            }
+        } catch (e) { /* сервер недоступен — считаем, что сигнала нет */ }
+
+        if (ready) {
+            if (frame.getAttribute('src') !== STREAM_URL) {
+                frame.setAttribute('src', STREAM_URL);
+            }
+            wrap.classList.add('online');
+        } else {
+            if (frame.getAttribute('src')) {
+                frame.setAttribute('src', 'about:blank');
+            }
+            wrap.classList.remove('online');
+        }
+    }
+
+    tick();
+    setInterval(tick, 3000);
+</script>
+</body>
+</html>

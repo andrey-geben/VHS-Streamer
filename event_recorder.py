@@ -11,6 +11,8 @@
     * между событиями запись не ведётся.
 """
 import logging
+
+from helper import app_dir
 import platform
 import subprocess
 import threading
@@ -53,7 +55,10 @@ class EventRecorder:
             elif base.name != camera.id:
                 base = base / camera.id
         else:
-            base = Path(archive_cfg["path"]).expanduser() / camera.id
+            base = Path(archive_cfg["path"]).expanduser()
+        if not base.is_absolute():
+            base = app_dir() / base
+        base = base / camera.id
 
         self.base_path: Path = base.resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)

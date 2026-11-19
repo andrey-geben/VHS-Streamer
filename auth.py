@@ -62,33 +62,40 @@ def verify_api_token(token: str) -> bool:
 # A.3: Web-токены для MediaMTX authMethod: http (WHEP/WebRTC из iframe)
 # ----------------------------------------------------------------------
 _MTX_TOKEN_TTL = 12 * 3600
-_mtx_tokens: dict[str, dict] = {}
+_MTX_TOKEN_SALT = "vhs-mtx-token"
+
+
+def _mtx_serializer():
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(current_app.secret_key, salt=_MTX_TOKEN_SALT)
 
 
 def create_mtx_token(username: str) -> str:
-    """Создаёт случайный токен для пользователя. Возвращает token (plaintext)."""
-    token = _secrets.token_urlsafe(32)
-    _mtx_tokens[token] = {
-        "username": username,
-        "expires_ts": _time.time() + _MTX_TOKEN_TTL,
-    }
-    return token
+    """Подписанный токен для MediaMTX.
+
+    Раньше токен жил в памяти процесса: после перезапуска приложения iframe
+    приходил со «старым» токеном, проверка не находила его и превью
+    оставались чёрными (mediamtx_auth DENY). Подпись проверяется по
+    secret_key, поэтому токен переживает рестарт.
+    """
+    return _mtx_serializer().dumps({"u": username})
 
 
 def revoke_mtx_token(token: str) -> None:
-    """Удаляет токен (при logout)."""
-    _mtx_tokens.pop(token, None)
+    """Подписанный токен нельзя отозвать — только дождаться срока."""
+    return None
 
 
 def _lookup_mtx_token(token: str) -> dict | None:
-    """Возвращает запись токена или None (с проверкой срока)."""
-    rec = _mtx_tokens.get(token)
-    if not rec:
+    """Проверяет подпись и срок. Возвращает {'username': ...} или None."""
+    from itsdangerous import BadSignature, SignatureExpired
+    try:
+        data = _mtx_serializer().loads(token, max_age=_MTX_TOKEN_TTL)
+    except (BadSignature, SignatureExpired):
         return None
-    if rec["expires_ts"] < _time.time():
-        _mtx_tokens.pop(token, None)
-        return None
-    return rec
+    if isinstance(data, dict) and data.get("u"):
+        return {"username": data["u"]}
+    return None
 
 
 def get_mtx_token() -> str | None:

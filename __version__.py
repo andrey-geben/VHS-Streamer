@@ -4,7 +4,7 @@
 Используется во всех модулях проекта для консистентного отображения.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"
 __author__ = "Andrew Geben"
 __copyright__ = "Copyright (c) 2026 Andrew Geben"
 __license__ = "Proprietary"

@@ -1,0 +1,784 @@
+/* ==========================================================================
+   VHS-Streamer — единая тема интерфейса.
+   Подключается после инлайн-стилей страницы, поэтому перекрывает их.
+   Принцип: спокойный тёмный фон, один акцент, крупные радиусы, аккуратные
+   состояния (hover / focus / disabled), таблицы и формы без «прыжков».
+   ========================================================================== */
+
+:root {
+    --bg: #0e1116;
+    --bg-grad: radial-gradient(1200px 600px at 20% -10%, #18202e 0%, transparent 60%),
+               radial-gradient(900px 500px at 100% 0%, #131c2b 0%, transparent 55%),
+               #0e1116;
+    --surface: #151a22;
+    --surface-2: #1b2230;
+    --surface-3: #212a3a;
+    --border: #26303f;
+    --border-soft: #1e2634;
+    --text: #e7edf6;
+    --text-dim: #9aa8bc;
+    --text-mute: #6f7d92;
+    --accent: #5b8cff;
+    --accent-hover: #74a0ff;
+    --accent-soft: rgba(91, 140, 255, 0.14);
+    --ok: #3fce7c;
+    --warn: #f0b429;
+    --danger: #ef5b5b;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.25);
+    --font: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+html { color-scheme: dark; }
+
+body {
+    margin: 0;
+    font-family: var(--font);
+    background: var(--bg-grad);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Шапка ---------- */
+header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 22px;
+    background: rgba(14, 17, 22, 0.82);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-soft);
+}
+
+header .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.05rem;
+    font-weight: 650;
+    letter-spacing: 0.2px;
+    color: var(--text);
+}
+
+header nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+header nav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 7px 12px;
+    border-radius: 9px;
+    font-size: 0.92rem;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+header nav a:hover { background: var(--surface-2); color: var(--text); }
+
+header .user {
+    color: var(--text-mute);
+    font-size: 0.85rem;
+    padding-left: 10px;
+}
+
+main { padding: 22px; max-width: 1600px; margin: 0 auto; }
+
+/* ---------- Карточки ---------- */
+.card {
+    background: linear-gradient(180deg, var(--surface) 0%, #131820 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+}
+
+.card h1, .card h2, .card h3 { margin-top: 0; font-weight: 640; letter-spacing: 0.2px; }
+.card h2 { font-size: 1.08rem; }
+.card h3 { font-size: 0.98rem; color: var(--text-dim); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 18px; }
+
+/* ---------- Кнопки ---------- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 16px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-size: 0.92rem;
+    font-weight: 560;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+}
+
+.btn:hover { background: var(--accent-hover); }
+.btn:active { transform: translateY(1px); }
+
+.btn.secondary {
+    background: var(--surface-2);
+    border-color: var(--border);
+    color: var(--text);
+}
+.btn.secondary:hover { background: var(--surface-3); }
+
+.btn.danger { background: var(--danger); }
+.btn.danger:hover { background: #ff6f6f; }
+
+.btn:disabled, .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- Формы ---------- */
+input, select, textarea {
+    background: #0f141b;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 9px 11px;
+    font: inherit;
+    font-size: 0.92rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+label { color: var(--text-dim); font-size: 0.88rem; }
+
+.form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.form-row label { min-width: 200px; }
+.form-row input[type=text], .form-row input[type=number], .form-row select { flex: 1; min-width: 180px; }
+
+/* ---------- Таблицы ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+th, td { padding: 9px 11px; text-align: left; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+th {
+    color: var(--text-mute);
+    font-weight: 560;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+
+a { color: var(--accent); }
+a.filelink { color: #8fb4ff; text-decoration: none; }
+a.filelink:hover { text-decoration: underline; }
+
+.status-on { color: var(--ok); }
+.status-off { color: var(--danger); }
+.muted { color: var(--text-mute); font-size: 0.88rem; }
+
+/* ---------- Уведомления ---------- */
+.toast {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 300;
+    max-width: 420px;
+    padding: 13px 18px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    display: none;
+    animation: toast-in 0.18s ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.toast.err { border-color: rgba(239, 91, 91, 0.55); }
+
+/* ---------- Скроллбар ---------- */
+* { scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 10px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #2f3b4f; background-clip: content-box; }
+
+/* ---------- Мелкие утилиты ---------- */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--text-dim);
+}
+.badge.ok { color: var(--ok); border-color: rgba(63, 206, 124, 0.35); background: rgba(63, 206, 124, 0.1); }
+.badge.off { color: var(--danger); border-color: rgba(239, 91, 91, 0.35); background: rgba(239, 91, 91, 0.1); }
+
+@media (max-width: 720px) {
+    main { padding: 14px; }
+    header { padding: 10px 14px; }
+    header nav a { padding: 6px 9px; font-size: 0.86rem; }
+}
+
+/* ==========================================================================
+   Главная страница: сетка камер
+   Селекторы с `body` нужны, чтобы перекрыть инлайн-стили страницы
+   (они подключаются позже, но с меньшей специфичностью).
+   ========================================================================== */
+
+body .cam-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 18px;
+    margin-top: 4px;
+}
+
+body .cam-card {
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, var(--surface) 0%, #12171f 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow-soft);
+    transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+body .cam-card:hover {
+    border-color: #33405a;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+    transform: translateY(-1px);
+}
+
+body .cam-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+body .cam-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.2px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+body .cam-preview {
+    position: relative;
+    background: #080b10;
+    aspect-ratio: 16 / 9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+body .cam-preview .muted {
+    color: var(--text-mute);
+    font-size: 0.85rem;
+}
+
+body .cam-iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+}
+
+body .cam-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border-soft);
+    background: rgba(0, 0, 0, 0.15);
+}
+
+body .cam-ptz-btn,
+body .cam-archive-btn,
+body .cam-fs-btn,
+body .fs-ptz-btn {
+    padding: 6px 11px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+body .cam-ptz-btn:hover,
+body .cam-archive-btn:hover,
+body .cam-fs-btn:hover,
+body .fs-ptz-btn:hover {
+    background: var(--surface-3);
+    color: var(--text);
+    border-color: #36435c;
+}
+
+body .status-on { color: var(--ok); }
+body .status-off { color: var(--danger); }
+
+/* ---------- Панель PTZ ---------- */
+body .cam-ptz-panel,
+body .fs-ptz-panel {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 20;
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(14, 18, 24, 0.94);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(6px);
+}
+
+body .ptz-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+}
+
+body .ptz-close {
+    background: transparent;
+    border: none;
+    color: var(--text-mute);
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+body .ptz-close:hover { color: var(--text); }
+
+body .ptz-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 34px);
+    gap: 6px;
+}
+
+body .ptz-b {
+    width: 34px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+body .ptz-b:hover { background: var(--surface-3); color: var(--text); }
+
+/* ---------- Полный экран ---------- */
+body .fs-overlay {
+    display: none;              /* показывается только с классом .active */
+    position: fixed;
+    inset: 0;
+    z-index: 400;
+    background: #05070a;
+    flex-direction: column;
+}
+
+body .fs-overlay.active { display: flex; }
+
+body .fs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: rgba(14, 18, 24, 0.9);
+    border-bottom: 1px solid var(--border-soft);
+}
+
+body .fs-title { font-weight: 600; margin-right: auto; }
+body .fs-body { flex: 1; position: relative; overflow: hidden; }
+
+/* ---------- Модальное окно архива ---------- */
+body .am-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    width: min(900px, 92vw);
+    max-height: 86vh;
+    overflow: auto;
+}
+
+body .am-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-soft);
+}
+
+body .am-body { padding: 14px 16px; }
+
+@media (max-width: 720px) {
+    body .cam-grid { grid-template-columns: 1fr; }
+}
+
+header nav a.active {
+    background: var(--accent-soft);
+    color: #cfe0ff;
+    box-shadow: inset 0 0 0 1px rgba(91, 140, 255, 0.35);
+}
+
+/* ==========================================================================
+   Компактная мозаика камер + сервисная плашка сверху
+   ========================================================================== */
+
+body main { padding: 12px 14px; }
+
+body .cam-grid {
+    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+}
+
+body .cam-card { border-radius: 10px; }
+
+body .cam-header {
+    padding: 8px 10px;
+    align-items: flex-start;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-soft);
+}
+
+body .cam-headline { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+body .cam-name { font-size: 0.9rem; }
+body .cam-badges {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.74rem;
+    line-height: 1.2;
+}
+body .cam-actions { flex-shrink: 0; }
+
+body .cam-ptz-btn,
+body .cam-archive-btn,
+body .cam-fs-btn {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    border-radius: 7px;
+}
+
+body .cam-footer { display: none; }
+
+/* Сервисная плашка: компактные чипы, сгруппированы в верхней части */
+body #summary-bar {
+    padding: 8px 10px !important;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    box-shadow: none;
+}
+
+body #summary-bar > div {
+    gap: 6px 8px !important;
+    font-size: 0.78rem;
+    align-items: center;
+}
+
+body #summary-bar > div > div {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-soft);
+    white-space: nowrap;
+}
+
+body #summary-bar > div > span { display: none; }
+body #summary-bar .muted {
+    margin-left: 0 !important;
+    font-size: 0.74rem;
+    color: var(--text-mute);
+    background: transparent;
+    border-color: transparent;
+}
+
+@media (max-width: 720px) {
+    body .cam-grid { grid-template-columns: 1fr; }
+    body main { padding: 10px; }
+}
+
+/* ==========================================================================
+   Светлая тема. Переключается атрибутом data-theme на <html>.
+   ========================================================================== */
+html[data-theme="light"] {
+    --bg: #f5f7fb;
+    --bg-grad: radial-gradient(900px 500px at 15% -10%, #eaf0fb 0%, transparent 60%),
+               radial-gradient(700px 400px at 100% 0%, #eef3fd 0%, transparent 55%),
+               #f5f7fb;
+    --surface: #ffffff;
+    --surface-2: #eef2f8;
+    --surface-3: #e4eaf3;
+    --border: #d5dce7;
+    --border-soft: #e3e8f0;
+    --text: #1a2230;
+    --text-dim: #47536a;
+    --text-mute: #7b8799;
+    --accent: #2f6fed;
+    --accent-hover: #4b82f5;
+    --accent-soft: rgba(47, 111, 237, 0.12);
+    --ok: #1f9d55;
+    --warn: #b7791f;
+    --danger: #d64545;
+    --shadow: 0 12px 30px rgba(30, 45, 70, 0.12);
+    --shadow-soft: 0 2px 10px rgba(30, 45, 70, 0.08);
+    color-scheme: light;
+}
+
+html[data-theme="light"] header {
+    background: rgba(255, 255, 255, 0.86);
+}
+
+html[data-theme="light"] header nav a:hover {
+    background: var(--surface-2);
+}
+
+html[data-theme="light"] .card,
+html[data-theme="light"] body .cam-card {
+    background: #ffffff;
+}
+
+html[data-theme="light"] body .cam-header {
+    background: rgba(0, 0, 0, 0.015);
+}
+
+html[data-theme="light"] body .cam-preview {
+    background: #e7ecf4;
+}
+
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+    background: #ffffff;
+}
+
+html[data-theme="light"] body .cam-ptz-panel,
+html[data-theme="light"] body .fs-ptz-panel {
+    background: rgba(255, 255, 255, 0.96);
+}
+
+html[data-theme="light"] body .fs-overlay {
+    background: #ffffff;
+}
+
+html[data-theme="light"] .toast {
+    background: #ffffff;
+}
+
+/* ---------- Переключатель темы ---------- */
+.theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin-left: 8px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.theme-toggle:hover { background: var(--surface-3); color: var(--text); }
+
+/* ---------- Светлая тема: усиленные перекрытия ----------
+   Стили страниц (index.html и др.) подключаются позже theme.css,
+   поэтому для одинаковых селекторов нужен !important. */
+html[data-theme="light"] body {
+    background: var(--bg-grad) !important;
+    color: var(--text) !important;
+}
+
+html[data-theme="light"] header {
+    background: rgba(255, 255, 255, 0.9) !important;
+    border-bottom-color: var(--border) !important;
+}
+
+html[data-theme="light"] .card,
+html[data-theme="light"] body .cam-card,
+html[data-theme="light"] body .am-panel {
+    background: #ffffff !important;
+    border-color: var(--border) !important;
+    box-shadow: var(--shadow-soft) !important;
+    color: var(--text) !important;
+}
+
+html[data-theme="light"] body .cam-header,
+html[data-theme="light"] body .cam-footer {
+    background: rgba(15, 25, 45, 0.03) !important;
+    border-color: var(--border-soft) !important;
+}
+
+html[data-theme="light"] body .cam-preview {
+    background: #e6ebf3 !important;
+}
+
+html[data-theme="light"] body .cam-name,
+html[data-theme="light"] body .fs-title,
+html[data-theme="light"] .card h1,
+html[data-theme="light"] .card h2,
+html[data-theme="light"] .card h3 {
+    color: var(--text) !important;
+}
+
+html[data-theme="light"] body .muted,
+html[data-theme="light"] .card .muted { color: var(--text-mute) !important; }
+
+html[data-theme="light"] body #summary-bar {
+    background: #ffffff !important;
+    border: 1px solid var(--border) !important;
+}
+
+html[data-theme="light"] body #summary-bar > div > div {
+    background: var(--surface-2) !important;
+    border-color: var(--border) !important;
+    color: var(--text) !important;
+}
+
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+    background: #ffffff !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
+}
+
+html[data-theme="light"] table th { color: var(--text-mute) !important; }
+html[data-theme="light"] table td { color: var(--text) !important; border-color: var(--border-soft) !important; }
+
+html[data-theme="light"] body .cam-ptz-panel,
+html[data-theme="light"] body .fs-ptz-panel {
+    background: rgba(255, 255, 255, 0.97) !important;
+    border-color: var(--border) !important;
+}
+
+html[data-theme="light"] body .ptz-b,
+html[data-theme="light"] body .cam-ptz-btn,
+html[data-theme="light"] body .cam-archive-btn,
+html[data-theme="light"] body .cam-fs-btn {
+    background: var(--surface-2) !important;
+    border-color: var(--border) !important;
+    color: var(--text-dim) !important;
+}
+
+html[data-theme="light"] body .fs-overlay { background: #eef2f8 !important; }
+html[data-theme="light"] body .fs-toolbar { background: #ffffff !important; border-color: var(--border) !important; }
+
+html[data-theme="light"] header nav a.active {
+    background: var(--accent-soft) !important;
+    color: var(--accent) !important;
+    box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.35) !important;
+}
+
+/* ---------- «Нет сигнала» на плитке камеры ---------- */
+body .cam-offline {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: #0a0d12;
+    color: var(--text-mute);
+    font-size: 0.85rem;
+    letter-spacing: 0.2px;
+    z-index: 5;
+}
+
+body .cam-offline__icon { font-size: 1.6rem; opacity: 0.55; }
+
+body .cam-iframe { position: relative; z-index: 1; }
+body .cam-offline { z-index: 6; }
+
+body .cam-preview.is-offline .cam-offline { display: flex; }
+body .cam-preview.is-offline .cam-iframe { visibility: hidden; }
+
+html[data-theme="light"] body .cam-offline {
+    background: #e6ebf3;
+    color: #6b7a8d;
+}
+
+/* ---------- Исходящие потоки (клоны) на плитке ---------- */
+body .cam-outputs {
+    display: none;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+}
+
+body .out-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 120px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 0.68rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+body .out-badge:hover { background: var(--surface-3); }
+
+body .out-badge.ok {
+    color: var(--ok);
+    border-color: rgba(63, 206, 124, 0.35);
+    background: rgba(63, 206, 124, 0.10);
+}
+
+body .out-badge.off {
+    color: var(--danger);
+    border-color: rgba(239, 91, 91, 0.30);
+    background: rgba(239, 91, 91, 0.08);
+}
+
+html[data-theme="light"] body .cam-outputs {
+    background: rgba(15, 25, 45, 0.03);
+}

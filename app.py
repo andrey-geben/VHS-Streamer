@@ -1,8 +1,11 @@
 """
 VHS-Streamer — главный сервер.
 """
+import atexit
 import logging
 import platform
+from urllib.parse import quote
+import threading
 import sys
 import time
 from datetime import datetime, timedelta
@@ -40,6 +43,7 @@ from __version__ import (
 # Пути и логирование
 # ----------------------------------------------------------------------
 from helper import app_dir, resource_dir
+from first_run import ensure_config, print_first_run_banner
 from events_manager import EventsManager
 
 BASE_DIR = app_dir()                 # куда писать (рядом с .exe или корень проекта)
@@ -105,7 +109,30 @@ if not bootstrap_is_ready():
         logger.exception("Bootstrap упал: %s", e)
 
 if not bootstrap_is_ready():
-    logger.error("MediaMTX/FFmpeg не установлены. Запустите: python bootstrap.py")
+    # ------------ подсказка -----------------
+    # На головной станции часто нет интернета: bootstrap не может скачать
+    # MediaMTX/FFmpeg. Вместо молчаливого выхода объясняем, что делать.
+    msg = (
+        "\n" + "=" * 70 + "\n"
+        "  НЕ НАЙДЕНЫ КОМПОНЕНТЫ: MediaMTX и/или FFmpeg\n"
+        "\n"
+        f"  Искали в: {BOOTSTRAP_BIN_DIR}\n"
+        "\n"
+        "  Что сделать (любой вариант):\n"
+        "   1) Если папка bin/ есть рядом с программой — проверьте права на неё.\n"
+        "   2) Без интернета: положите в bin/ файлы\n"
+        "        mediamtx.exe, ffmpeg.exe, ffprobe.exe\n"
+        "      (взять с машины разработчика или из релиза).\n"
+        "   3) С интернетом: удалите bin/ и запустите снова —\n"
+        "      компоненты скачаются автоматически.\n"
+        + "=" * 70
+    )
+    print(msg, file=sys.stderr, flush=True)
+    logger.error("MediaMTX/FFmpeg не установлены. %s", BOOTSTRAP_BIN_DIR)
+    try:
+        input("Нажмите Enter, чтобы закрыть окно...")
+    except Exception:
+        pass
     sys.exit(1)
 
 
@@ -136,8 +163,28 @@ def load_config() -> dict:
         return yaml.safe_load(f) or {}
 
 
+# ------------ подсказка -----------------
+# Первый запуск на новой машине: config.yaml может отсутствовать.
+# Создаём его из примера, генерируем пароль админа и печатаем в консоль.
+first_run_info = None
+try:
+    first_run_info = ensure_config(CONFIG_PATH, BASE_DIR / "config.example.yaml")
+except Exception as e:
+    logger.exception("Не удалось создать config.yaml при первом запуске: %s", e)
+
 config = load_config()
+
+# ------------ подсказка -----------------
+# Флаги обслуживания обрабатываем до старта служб: на целевой машине
+# проще набрать VHS-Streamer.exe --reset-auth, чем править YAML руками.
+from cli_auth import handle_argv  # noqa: E402
+if handle_argv(sys.argv[1:], CONFIG_PATH):
+    sys.exit(0)
 server_cfg = config.get("server", {})
+
+if first_run_info:
+    _port = server_cfg.get("port", 8000)
+    print_first_run_banner(first_run_info, f"http://127.0.0.1:{_port}")
 security_cfg = config.get("security", {})
 archive_cfg = config.get("archive", {})
 dup_cfg = config.get("duplicate_stream", {})
@@ -145,6 +192,40 @@ mediamtx_cfg = config.get("mediamtx", {})
 cameras_cfg = config.get("cameras", [])
 streams_cfg = config.get("streams", [])
 
+
+# ------------ подсказка -----------------
+# Если прошлый запуск упал, ffmpeg/mediamtx могли остаться висеть.
+# Проверяем, свободен ли наш порт: если да — это осиротевшие процессы,
+# их надо погасить, иначе они держат камеры и порты.
+def _our_port_busy(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+
+# Страховка: при аварийном выходе (sys.exit/необработанное исключение)
+# всё равно гасим дочерние процессы.
+def _cleanup_at_exit():
+    try:
+        from proc_tree import kill_leftovers
+        kill_leftovers(BOOTSTRAP_BIN_DIR)
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_at_exit)
+
+try:
+    from proc_tree import kill_leftovers, count_bin_processes
+    if not _our_port_busy(int(server_cfg.get("port", 8000))):
+        _orphans = count_bin_processes(BOOTSTRAP_BIN_DIR)
+        if _orphans:
+            logger.warning("Найдено %d зависших процессов в bin/ — закрываю", _orphans)
+            kill_leftovers(BOOTSTRAP_BIN_DIR)
+except Exception as exc:
+    logger.warning("Проверка зависших процессов не удалась: %s", exc)
 
 # ======================================================================
 #  MediaMTX (до камер!)
@@ -169,6 +250,31 @@ except Exception as e:
         "Не удалось синхронизировать auth mediamtx.yml: %s", e,
     )
 
+# ------------ подсказка -----------------
+# На машине, куда перенесли программу, mediamtx.yml мог остаться от другой
+# установки: в нём абсолютные пути к ffmpeg с чужого компьютера, и MediaMTX
+# бесконечно пытается их запускать. Пути всё равно генерируются приложением,
+# поэтому чистим их перед стартом.
+def _sanitize_mediamtx_paths(cfg_path: Path) -> None:
+    try:
+        if not cfg_path.exists():
+            return
+        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        old = data.get("paths") or {}
+        if old:
+            data["paths"] = {}
+            cfg_path.write_text(
+                yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            logger.warning(
+                "mediamtx.yml: убрано %s устаревших путей (создаются заново)", len(old))
+    except Exception as e:
+        logger.warning("mediamtx.yml: не удалось очистить пути: %s", e)
+
+
+_sanitize_mediamtx_paths(_mediamtx_config)
+
 mediamtx: MediaMTXManager | None = None
 try:
     mediamtx = MediaMTXManager(_mediamtx_binary, _mediamtx_config)
@@ -188,6 +294,53 @@ except Exception as e:
 #  физической камеры. Это решает проблему эксклюзивного захвата
 #  на Windows и снижает нагрузку на камеру.
 # ======================================================================
+
+
+# ------------ подсказка -----------------
+# MediaMTX может упасть (кривой путь, конфликт порта). Раньше приложение
+# этого не замечало: камеры теряли поток, API 9997 не отвечал. Сторож
+# проверяет процесс и поднимает его заново.
+def _mediamtx_watchdog():
+    while True:
+        time.sleep(15)
+        try:
+            if mediamtx is None:
+                continue
+            if not mediamtx.is_alive():
+                logger.warning("MediaMTX не работает — перезапускаю")
+                if mediamtx.restart():
+                    logger.info("MediaMTX перезапущен")
+                continue
+
+            # Бывает, что при старте путь не создался (занят, гонка с API).
+            # Тогда он появлялся только при добавлении исходящего потока.
+            _restored = False
+            for cid, cam in list(cameras.items()):
+                name = f"__raw_{cid}"
+                try:
+                    if mediamtx.get_path_status(name) is None:
+                        mediamtx.add_path(
+                            name, _mtx_helpers.build_raw_path_config(cam))
+                        logger.warning("MediaMTX: восстановлен raw-путь %s", name)
+                        _restored = True
+                except Exception:
+                    continue
+
+            # Пути, добавленные через API, живут в памяти MediaMTX и теряются
+            # при его перезапуске. Сразу пишем их в mediamtx.yml.
+            if _restored:
+                try:
+                    _sync_mediamtx_auth(config, _mediamtx_config)
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception("watchdog MediaMTX")
+
+
+if mediamtx is not None:
+    threading.Thread(target=_mediamtx_watchdog, name="mediamtx-watchdog",
+                     daemon=True).start()
+
 loopback_urls: dict[str, str] = {}  # cam_id -> rtsp URL
 
 if mediamtx:
@@ -389,9 +542,26 @@ else:
 # ======================================================================
 #  Flask
 # ======================================================================
+# ------------ подсказка -----------------
+# Шаблоны и статику ищем сначала РЯДОМ с exe: тогда их можно обновить,
+# не пересобирая программу. Если рядом пусто — берём встроенные
+# из _MEIPASS. Раньше приоритет был у встроенных, и после замены одного
+# exe в кадре оставалась старая разметка (iframe на MediaMTX напрямую).
+def _resource_dir(name: str) -> Path:
+    external = BASE_DIR / name
+    if external.exists():
+        return external
+    return RES_DIR / name
+
+
+_TEMPLATES_DIR = _resource_dir("templates")
+_STATIC_DIR = _resource_dir("static")
+
 app = Flask(
     __name__,
-    template_folder=str(RES_DIR / "templates"),
+    template_folder=str(_TEMPLATES_DIR),
+    static_folder=str(_STATIC_DIR),
+    static_url_path="/static",
 )
 app.secret_key = server_cfg.get("secret_key", "dev-secret-change-me")
 app.config["APP_CONFIG"] = config
@@ -423,7 +593,13 @@ app.register_blueprint(diagnostics_bp)
 #  Хелперы для шаблонов
 # ======================================================================
 def archive_root() -> Path:
-    return Path(config.get("archive", {}).get("path", "./archive")).resolve()
+    """Папка архива. Относительные пути считаем от папки программы,
+    а не от текущего каталога процесса (иначе при запуске из ярлыка
+    или планировщика архив уезжает в другое место)."""
+    raw = Path(config.get("archive", {}).get("path", "./archive"))
+    if not raw.is_absolute():
+        raw = BASE_DIR / raw
+    return raw.resolve()
 
 
 def human_size(num_bytes: float) -> str:
@@ -557,15 +733,24 @@ def index():
         "loopback_cameras": list(loopback_urls.keys()),
     }
 
+    # ------------ подсказка -----------------
+    # Превью в iframe авторизуется в MediaMTX по web-токену. Если его нет
+    # в сессии (старая сессия, перезапуск) — создаём на месте, иначе
+    # MediaMTX вернёт 401 и плитка останется чёрной.
+    _mtx_token = auth_mod.get_mtx_token()
+    _mtx_user = ((g.user or session.get("user") or {}).get("username"))
+    if not _mtx_token and _mtx_user:
+        _mtx_token = auth_mod.create_mtx_token(_mtx_user)
+        session["mtx_token"] = _mtx_token
+
     return render_template(
         "index.html",
         cameras=visible_cams,
         rec_statuses=rec_statuses,
         sysinfo=sysinfo,
         user=g.user,
-        # A.4: креды для MediaMTX (WHEP из iframe)
-        mtx_user=(g.user.get("username") if g.user else None),
-        mtx_token=auth_mod.get_mtx_token(),
+        mtx_user=_mtx_user,
+        mtx_token=_mtx_token,
     )
 
 # ======================================================================
@@ -617,10 +802,14 @@ def internal_mediamtx_auth():
     # 2. Проверка creds
     user_info = auth_mod.resolve_mtx_credentials(user, password)
     if not user_info:
-        logger.info(
-            "mediamtx_auth DENY: no creds (ip=%r protocol=%r path=%r)",
-            ip, protocol, path,
-        )
+        if not user and not password:
+            logger.info(
+                "mediamtx_auth DENY: креды не переданы (ip=%r protocol=%r path=%r)",
+                ip, protocol, path)
+        else:
+            logger.info(
+                "mediamtx_auth DENY: неверные креды (user=%r ip=%r protocol=%r path=%r)",
+                user, ip, protocol, path)
         return "", 401
 
     kind = user_info.get("kind")
@@ -907,6 +1096,95 @@ def api_status():
 # ======================================================================
 #  API: системный мониторинг (CPU / RAM / диски / GPU)
 # ======================================================================
+# ------------ подсказка -----------------
+# Главной странице нужно знать, есть ли сигнал: если raw-путь не поднят,
+# MediaMTX в iframe отдаёт JSON {"status":"error",...} — некрасиво.
+# ------------ подсказка -----------------
+# Исходящих клонов может быть много, смотреть все не нужно — достаточно
+# индикатора «жив/нет» и возможности открыть один для проверки.
+@app.route("/api/streams/status", methods=["GET"])
+@auth_mod.login_required
+def api_streams_status():
+    """Статус исходящих потоков (клонов): ready + число читателей."""
+    out = []
+    for st in streams_cfg:
+        path = str(st.get("path") or "").strip().lstrip("/")
+        item = {
+            "id": st.get("id"),
+            "camera_id": st.get("camera_id"),
+            "path": path,
+            "enabled": bool(st.get("enabled", True)),
+            "ready": False,
+            "readers": 0,
+            "source": "",
+        }
+        if path and mediamtx is not None:
+            try:
+                info = mediamtx.get_path_status(path) or {}
+                item["ready"] = bool(info.get("ready"))
+                item["readers"] = len(info.get("readers") or [])
+                src = info.get("source") or {}
+                item["source"] = src.get("type", "") if isinstance(src, dict) else str(src)
+            except Exception:
+                pass
+        out.append(item)
+    return jsonify(out)
+
+
+# ------------ подсказка -----------------
+# Плитка грузит не MediaMTX напрямую, а нашу страницу-плеер: она знает,
+# готов ли входящий путь, и не показывает JSON-ошибку MediaMTX.
+@app.route("/player/<cam_id>")
+@auth_mod.login_required
+def player_page(cam_id: str):
+    cam = cameras.get(cam_id)
+    if cam is None:
+        abort(404)
+
+    token = auth_mod.get_mtx_token()
+    username = ((g.user or session.get("user") or {}).get("username"))
+    if not token and username:
+        token = auth_mod.create_mtx_token(username)
+        session["mtx_token"] = token
+
+    host = request.host.split(":")[0]
+    stream_url = (
+        f"http://{host}:8889/__raw_{cam_id}/"
+        f"?user={quote(username or '')}&pass={quote(token or '')}"
+    )
+    return render_template(
+        "player.html",
+        cam_id=cam_id,
+        cam_name=cam.name,
+        stream_url=stream_url,
+    )
+
+
+@app.route("/api/cameras/status", methods=["GET"])
+@auth_mod.login_required
+def api_cameras_status():
+    """Короткий статус камер для оверлея «Нет сигнала» на плитках."""
+    out = {}
+    for cid, cam in cameras.items():
+        try:
+            st = cam.get_status() or {}
+            # get_status() возвращает словарь, а не объект
+            item = {
+                "connected": bool(st.get("connected")),
+                "raw_ready": False,
+                "error": st.get("last_error") or "",
+            }
+            # Превью показывает именно входящий raw-путь, поэтому важно
+            # его состояние, а не подключение нашего RTSP-читателя.
+            if mediamtx is not None:
+                info = mediamtx.get_path_status(f"__raw_{cid}") or {}
+                item["raw_ready"] = bool(info.get("ready"))
+            out[cid] = item
+        except Exception:
+            out[cid] = {"connected": False, "raw_ready": False, "error": ""}
+    return jsonify(out)
+
+
 @app.route("/api/system/stats")
 @auth_mod.login_required
 def api_system_stats():
@@ -1048,5 +1326,15 @@ if __name__ == "__main__":
                 mediamtx.stop()
             except Exception:
                 pass
+
+        # 6. Добиваем всё, что могло остаться: ffmpeg-публикаторы MediaMTX,
+        #    рекордеры, процессы от прошлых падений.
+        try:
+            from proc_tree import kill_leftovers
+            killed = kill_leftovers(BOOTSTRAP_BIN_DIR)
+            if killed:
+                logger.info("Остановлено дочерних процессов: %d", len(killed))
+        except Exception:
+            logger.exception("Ошибка зачистки процессов при остановке")
 
         logger.info("Сервер остановлен")

@@ -526,6 +526,27 @@ def api_add_camera():
 
     st["cameras"][cam_id] = cam
 
+    # ------------ подсказка -----------------
+    # Входящий raw-путь создаём сразу: иначе превью новой камеры
+    # появляется только после прохода сторожа (до 15 секунд).
+    try:
+        from mediamtx_manager import build_raw_path_config
+        from preview import raw_path_name
+        mtx = st.get("mediamtx")
+        if mtx is not None:
+            mtx.add_path(raw_path_name(cam_id), build_raw_path_config(cam))
+            logger.info("[%s] входящий raw-путь создан сразу", cam_id)
+            # сохраняем в mediamtx.yml, чтобы путь пережил перезапуск MediaMTX
+            try:
+                from streams_api import _sync_mediamtx_auth
+                mtx_path = current_app.config.get("MEDIAMTX_CONFIG_PATH")
+                if mtx_path:
+                    _sync_mediamtx_auth(st["config"], mtx_path)
+            except Exception as exc:
+                logger.warning("[%s] путь не сохранён в mediamtx.yml: %s", cam_id, exc)
+    except Exception as exc:
+        logger.warning("[%s] raw-путь сразу не создан: %s", cam_id, exc)
+
     archive_cfg = st["config"].get("archive", {})
     mode = new_cfg.get("record_mode", "off")
     archive_on = (
@@ -1257,7 +1278,7 @@ def api_ptz_info(camera_id: str):
             "error": "Не удалось разобрать RTSP-URL камеры",
         }), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
     logger.info("[%s] PTZ info: %s", camera_id, endpoint)
 
     try:
@@ -1301,7 +1322,7 @@ def api_ptz_move(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
 
     from onvif_client import ptz_move
     ok = ptz_move(
@@ -1333,7 +1354,7 @@ def api_ptz_stop(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
 
     from onvif_client import ptz_stop
     ok = ptz_stop(
@@ -1363,7 +1384,7 @@ def api_ptz_home(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
 
     from onvif_client import ptz_home
     ok = ptz_home(
@@ -1394,7 +1415,7 @@ def api_ptz_preset_goto(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
 
     from onvif_client import ptz_goto_preset
     ok = ptz_goto_preset(
@@ -1426,7 +1447,7 @@ def api_ptz_preset_set(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
 
     from onvif_client import ptz_set_preset
     result = ptz_set_preset(
@@ -1458,7 +1479,7 @@ def api_ptz_preset_remove(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
 
     from onvif_client import ptz_remove_preset
     ok = ptz_remove_preset(
@@ -1474,6 +1495,42 @@ def api_ptz_preset_remove(camera_id: str):
 # ======================================================================
 # Вспомогательное: разбор RTSP-URL для ONVIF
 # ======================================================================
+def _ptz_endpoint_for(cam_id: str, cam, parsed: dict) -> str:
+    """Рабочий ONVIF-endpoint для PTZ: кэш проверки -> конфиг -> перебор портов.
+
+    Раньше move/stop/home всегда шли на порт 80, хотя capabilities могла
+    найти ONVIF на 8899 — команды уходили в никуда, а API возвращал 200.
+    """
+    cached = (_ptz_cache.get("data") or {}).get(cam_id) or {}
+    ep = cached.get("endpoint")
+    if ep and cached.get("has_ptz"):
+        return ep
+
+    try:
+        raw = next((c for c in _state()["config"].get("cameras", [])
+                    if c.get("id") == cam_id), {})
+    except Exception:
+        raw = {}
+
+    forced = (raw.get("ptz_endpoint") or "").strip()
+    if forced:
+        return forced
+
+    port = int(raw.get("onvif_port") or 0)
+    if port:
+        return f"http://{parsed['host']}:{port}/onvif/device_service"
+
+    from onvif_client import get_ptz_info
+    for p_ in (80, 8000, 2020, 8899):
+        cand = f"http://{parsed['host']}{'' if p_ == 80 else f':{p_}'}/onvif/device_service"
+        try:
+            if get_ptz_info(cand, parsed.get("user", ""), parsed.get("password", "")).get("has_ptz"):
+                return cand
+        except Exception:
+            continue
+    return f"http://{parsed['host']}/onvif/device_service"
+
+
 def _parse_rtsp_for_onvif(rtsp_url: str):
     """
     Разбирает RTSP-URL вида rtsp://user:pass@host:port/path
@@ -1560,7 +1617,10 @@ def api_ptz_capabilities():
 
     result = {}
     for cam_id, cam in cameras.items():
-        if cam.type != "ip":
+        # PTZ — это ONVIF поверх той же камеры: тип записи не важен,
+        # важно, что источник RTSP (у аналоговых его нет).
+        if not str(getattr(cam, "source", "")).startswith("rtsp://"):
+            result[cam_id] = {"has_ptz": False, "profile_token": None}
             continue
 
         parsed = _parse_rtsp_for_onvif(cam.source)
@@ -1568,24 +1628,55 @@ def api_ptz_capabilities():
             result[cam_id] = {"has_ptz": False, "profile_token": None}
             continue
 
-        endpoint = f"http://{parsed['host']}/onvif/device_service"
-        try:
-            info = get_ptz_info(
-                endpoint,
-                parsed.get("user", ""),
-                parsed.get("password", ""),
-            )
-            result[cam_id] = {
-                "has_ptz": bool(info.get("has_ptz")),
-                "profile_token": info.get("profile_token"),
-            }
-            logger.info("[%s] PTZ capabilities: has_ptz=%s",
-                        cam_id, info.get("has_ptz"))
-        except Exception as e:
-            logger.warning("[%s] PTZ capabilities error: %s", cam_id, e)
-            result[cam_id] = {"has_ptz": False, "profile_token": None}
+        # ------------ подсказка -----------------
+        # У камер ONVIF живёт на разных портах (80, 8000, 2020, 8899),
+        # поэтому пробуем по очереди и запоминаем причину отказа,
+        # чтобы её было видно в логе и в ответе API.
+        raw = next((c for c in st["config"].get("cameras", [])
+                    if c.get("id") == cam_id), {})
+        forced = (raw.get("ptz_endpoint") or "").strip()
+        _onvif_port = int(raw.get("onvif_port") or 0)
 
-    # Сохраняем в кэш
+        if forced:
+            entries = [forced]
+        elif _onvif_port:
+            entries = [f"http://{parsed['host']}:{_onvif_port}/onvif/device_service"]
+        else:
+            host = parsed["host"]
+            entries = [f"http://{host}{'' if p == 80 else f':{p}'}/onvif/device_service"
+                       for p in (80, 8000, 2020, 8899)]
+
+        found, last_error = None, None
+        for ep in entries:
+            try:
+                info = get_ptz_info(ep, parsed.get("user", ""),
+                                    parsed.get("password", ""))
+            except Exception as exc:
+                last_error = f"{ep}: {exc}"
+                continue
+            if info.get("has_ptz"):
+                found = (ep, info)
+                break
+            if info.get("error"):
+                last_error = f"{ep}: {info['error']}"
+
+        if found:
+            ep, info = found
+            result[cam_id] = {
+                "has_ptz": True,
+                "profile_token": info.get("profile_token"),
+                "endpoint": ep,
+            }
+            logger.info("[%s] PTZ доступен: %s", cam_id, ep)
+        else:
+            result[cam_id] = {
+                "has_ptz": False,
+                "profile_token": None,
+                "reason": last_error or "камера не ответила на ONVIF",
+            }
+            logger.warning("[%s] PTZ недоступен: %s", cam_id,
+                           last_error or "нет ответа ONVIF")
+
     _ptz_cache["data"] = result
     _ptz_cache["ts"] = now
 
@@ -1620,7 +1711,7 @@ def api_events_test(camera_id: str):
     if not parsed:
         return jsonify({"error": "Не удалось разобрать RTSP-URL камеры"}), 400
 
-    endpoint = f"http://{parsed['host']}/onvif/device_service"
+    endpoint = _ptz_endpoint_for(camera_id, cam, parsed)
     logger.info("[%s] Events test: %s, таймаут %s сек",
                 camera_id, endpoint, pull_timeout)
 

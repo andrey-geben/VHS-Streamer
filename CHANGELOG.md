@@ -82,15 +82,3 @@
   соответствующего железа и драйверов; иначе используется `libx264`.
 - Архив записей и `events.db` по-прежнему лежат рядом с программой —
   при обновлении папки их нужно сохранять.
-
-### Установка на NVIDIA Jetson (Axiomtek AIE100)
-
-- `install_jetson.sh` — установка на ARM64: проверка aarch64/Python 3.10+,
-  системные пакеты (ffmpeg, python3-opencv), venv с системным OpenCV,
-  MediaMTX для arm64 в `bin/`, ссылка на системный ffmpeg, создание конфига,
-  опциональная systemd-служба и правила ufw;
-- `requirements-linux.txt` — зависимости без `opencv-python` (на ARM
-  OpenCV ставится из apt);
-- `INSTALL_JETSON.md` — руководство: проверка JetPack, offline-установка,
-  NVENC на Jetson, обновление, типовые проблемы.
-

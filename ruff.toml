@@ -1,0 +1,17 @@
+﻿target-version = "py310"
+line-length = 120
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]
+exclude = [
+  "*.bak*",
+  "build*",
+  "dist*",
+  ".venv",
+  ".git",
+  ".idea",
+  "bin",
+  "archive",
+  "logs",
+  "VHS-Streamer-Jetson",
+]

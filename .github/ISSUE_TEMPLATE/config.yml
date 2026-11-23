@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Политика безопасности
+    url: https://github.com/andrey-geben/VHS-Streamer/blob/main/SECURITY.md
+    about: Как сообщить об уязвимости, не раскрывая её публично.
+  - name: Документация и установка
+    url: https://github.com/andrey-geben/VHS-Streamer/blob/main/README.md
+    about: README, требования, установка и решение типовых проблем.

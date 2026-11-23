@@ -1,0 +1,108 @@
+name: Bug report
+description: Сообщить о воспроизводимой ошибке в VHS-Streamer
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. **Не публикуйте здесь уязвимости** — для них есть [SECURITY.md](https://github.com/andrey-geben/VHS-Streamer/blob/main/SECURITY.md).
+
+        Перед отправкой уберите из логов и конфигурации пароли, токены, реальные IP и RTSP-URL с учётными данными.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я проверил(а) существующие issues и не нашёл(ла) дубликат.
+          required: true
+        - label: Я прочитал(а) README и инструкции по установке.
+          required: true
+        - label: Это не сообщение об уязвимости.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Что произошло
+      description: Кратко опишите проблему и её влияние.
+      placeholder: После обновления камеры поток перестал открываться в интерфейсе...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Чем точнее шаги, тем быстрее получится воспроизвести.
+      placeholder: |
+        1. Запустить ...
+        2. Открыть ...
+        3. Нажать ...
+        4. Увидеть ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+      description: Текст ошибки, код ответа, скриншот — без секретов.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия или commit
+      description: Версия из интерфейса, release tag или git commit.
+      placeholder: 1.1.1 / 2486c18
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Платформа
+      options:
+        - Windows
+        - Linux
+        - Docker
+        - NVIDIA Jetson
+        - Другое
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС, Python, способ запуска, модель камеры/NVR, MediaMTX, если важно.
+      placeholder: Windows 11, Python 3.12, запуск через start.bat, камера Hikvision...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи и конфигурация
+      description: Удалите пароли, токены, IP и персональные данные. Можно приложить файл.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Дополнительно
+      description: Что уже пробовали, связанные issues, особенности сети.
+    validations:
+      required: false

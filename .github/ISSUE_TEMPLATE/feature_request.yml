@@ -1,0 +1,70 @@
+name: Feature request
+description: Предложить улучшение или новую возможность VHS-Streamer
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите задачу и контекст. Для крупных изменений сначала лучше обсудить подход, чтобы не переделывать реализацию.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я проверил(а), что такой запрос ещё не обсуждался.
+          required: true
+        - label: Это не сообщение об уязвимости.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему это решает
+      description: Опишите сценарий использования, а не только желаемую кнопку.
+      placeholder: При работе с несколькими NVR приходится вручную...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+      description: Как это должно работать с точки зрения пользователя.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Рассмотренные альтернативы
+      description: Другие способы решения или обходные пути.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - Веб-интерфейс
+        - RTSP / MediaMTX
+        - ONVIF / камеры
+        - Архив и записи
+        - PTZ
+        - Motion detection
+        - Безопасность и авторизация
+        - Установка и развёртывание
+        - Документация
+        - Другое
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Дополнительный контекст
+      description: Ссылки, примеры, ограничения, скриншоты.
+    validations:
+      required: false

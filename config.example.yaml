@@ -7,7 +7,7 @@
 
 server:
   host: 0.0.0.0
-  port: 8000
+  port: 8100
   # ОБЯЗАТЕЛЬНО поменяйте! Сгенерировать: python -c "import secrets; print(secrets.token_urlsafe(48))"
   secret_key: "CHANGE-ME-to-a-long-random-string"
 
@@ -67,7 +67,9 @@ duplicate_stream:
 
 archive:
   enabled: true
-  path: "./archive"
+  # Только внешний носитель, например /mnt/vhs-archive.
+  # Путь внутри каталога программы или на системном диске отклоняется.
+  path: ""
   segment_minutes: 5
   max_size_gb: 50
   max_age_days: 30
@@ -98,7 +100,7 @@ onvif_proxy:
   enabled: true
 
   # Порт, на котором слушает ONVIF-прокси.
-  # Должен быть свободен (не 8000, не 8554, не 8889).
+  # Должен быть свободен (не 8100, не 8554, не 8889).
   port: 8081
 
   # Хост прослушивания. 0.0.0.0 — все интерфейсы.
@@ -116,3 +118,4 @@ onvif_proxy:
   firmware: "1.1.0"
   serial: "VHS-PROXY-0001"
   hardware: "VHS-Proxy"
+

@@ -45,6 +45,35 @@
         <li>PyInstaller — сборка .exe</li>
     </ul>
 
+    {% if is_arm %}
+    <h3 style="margin-top:24px">Миграция на другой ARM по SSH</h3>
+    <p class="muted" style="line-height:1.6">
+        В ARM-комплект входит <code>migrate_to_arm.sh</code>. Скрипт переносит
+        установку VHS-Streamer на другой ARM-сервер по SSH: копирует комплект,
+        запускает установщик, переносит конфигурацию и данные, затем запускает
+        службу на новом устройстве.
+    </p>
+    <ol class="muted" style="line-height:1.8; padding-left:22px">
+        <li>SSH-ключ и вход на новый ARM без пароля.</li>
+        <li><code>sudo</code> без пароля на новом ARM.</li>
+        <li>Запуск миграции с флешки или со старого сервера.</li>
+        <li>Скрипт копирует комплект и выполняет <code>install_jetson.sh</code>.</li>
+        <li>Переносятся <code>config.yaml</code>, <code>archive/</code> и <code>events.db</code>.</li>
+        <li>Служба на новом ARM запускается и проверяется.</li>
+    </ol>
+    <pre style="background:#0d1b25; border:1px solid #2a4152; border-radius:4px; padding:10px; overflow:auto; font-size:11px; color:#cfe9ef">./migrate_to_arm.sh user@new-arm \
+    --data-from /opt/vhs-streamer \
+    --stop-source</pre>
+    <p class="muted" style="line-height:1.6">
+        Для локальной сети добавьте <code>--open-ports</code>. Для edge-схемы
+        порты открывать не нужно: доступ идёт через WireGuard.
+    </p>
+    <p class="muted" style="line-height:1.6">
+        <b>Важно:</b> перед копированием архива остановите старый экземпляр,
+        иначе файл может быть скопирован в момент записи.
+    </p>
+    {% endif %}
+
     <h3 style="margin-top:24px">Лицензионное соглашение</h3>
     <p class="muted" style="line-height:1.6">
         Программное обеспечение является собственностью автора.

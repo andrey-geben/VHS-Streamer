@@ -21,9 +21,11 @@ from event_recorder import EventRecorder
 import camera_templates as ct
 import copy
 import logging
+import os
 import platform
 import re
 import secrets
+import shutil
 from pathlib import Path
 
 import yaml
@@ -69,6 +71,66 @@ def _save_config(cfg: dict, path: Path):
     except Exception as e:
         logger.error("Не удалось сохранить конфиг: %s", e)
         raise
+
+
+def _archive_storage_status():
+    """Проверяет, что архив указывает на подключённый внешний носитель."""
+    st = _state()
+    cfg = st["config"].get("archive", {})
+    raw = str(cfg.get("path") or "").strip()
+    base = Path(st["config_path"]).parent.resolve()
+    result = {
+        "configured": raw, "path": "", "available": False,
+        "external": False, "writable": False, "free_gb": 0, "reason": "",
+    }
+    if not raw:
+        result["reason"] = "Путь к внешнему архиву не задан"
+        return result
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    path = path.resolve()
+    result["path"] = str(path)
+    if base == path or base in path.parents:
+        result["reason"] = "Путь архива находится внутри системного каталога программы"
+        return result
+    if not path.exists() or not path.is_dir():
+        result["reason"] = "Внешнее хранилище не подключено: путь не найден"
+        return result
+    external = False
+    if os.name == "nt":
+        system_drive = os.environ.get("SystemDrive", "C:").lower()
+        external = bool(path.drive) and path.drive.lower() != system_drive
+    else:
+        try:
+            import psutil
+            mounts = [
+                str(part.mountpoint)
+                for part in psutil.disk_partitions(all=False)
+                if part.mountpoint
+            ]
+            mount = max(
+                (m for m in mounts if path == Path(m) or Path(m) in path.parents),
+                key=len, default="",
+            )
+            external = bool(mount) and mount != "/"
+        except Exception:
+            external = False
+    result["external"] = external
+    if not external:
+        result["reason"] = "Архив должен находиться на отдельном внешнем носителе"
+        return result
+    if not os.access(path, os.W_OK):
+        result["reason"] = "Нет прав на запись во внешнее хранилище"
+        return result
+    try:
+        result["free_gb"] = round(shutil.disk_usage(path).free / (1024 ** 3), 1)
+    except OSError:
+        result["free_gb"] = 0
+    result["available"] = True
+    result["writable"] = True
+    result["reason"] = "Внешнее хранилище подключено"
+    return result
 
 
 def _serialize_config(cfg: dict, is_admin: bool) -> dict:
@@ -482,6 +544,13 @@ def api_list_cameras():
     ])
 
 
+@settings_bp.route("/api/cameras/list", methods=["GET"])
+@login_required
+def api_list_cameras_alias():
+    """Стабильный alias для внешних интеграций (VHS-Security)."""
+    return api_list_cameras()
+
+
 @settings_bp.route("/api/cameras/<camera_id>", methods=["GET"])
 @login_required
 def api_get_camera(camera_id: str):
@@ -550,7 +619,7 @@ def api_add_camera():
     archive_cfg = st["config"].get("archive", {})
     mode = new_cfg.get("record_mode", "off")
     archive_on = (
-            archive_cfg.get("enabled", False)
+            _archive_storage_status().get("available", False)
             and archive_cfg.get("record_all", True)
     )
 
@@ -629,7 +698,7 @@ def api_update_camera(camera_id: str):
 
     archive_cfg = st["config"].get("archive", {})
     archive_on = (
-            archive_cfg.get("enabled", False)
+            _archive_storage_status().get("available", False)
             and archive_cfg.get("record_all", True)
     )
     mode = new_cfg.get("record_mode", "off")
@@ -784,7 +853,9 @@ def api_probe_audio(camera_id: str):
 @login_required
 def api_get_archive():
     st = _state()
-    return jsonify(st["config"].get("archive", {}))
+    data = dict(st["config"].get("archive", {}))
+    data["storage"] = _archive_storage_status()
+    return jsonify(data)
 
 
 @settings_bp.route("/api/archive/config", methods=["POST"])
@@ -801,11 +872,13 @@ def api_set_archive():
             archive[field] = payload[field]
 
     _save_config(st["config"], st["config_path"])
+    storage = _archive_storage_status()
 
     return jsonify({
         "ok": True,
         "restart_required": "path" in payload,
         "archive": archive,
+        "storage": storage,
     })
 
 
@@ -1027,6 +1100,37 @@ def _merge_discovery_results(onvif_list: list, sadp_list: list) -> list:
     return list(by_ip.values())
 
 
+def _merge_extra_discovery(devices, extra):
+    """Дополняет результаты ONVIF/SADP найденными SSDP/Dahua по IP."""
+    by_ip = {d.get("ip"): dict(d) for d in devices if d.get("ip")}
+    for item in extra or []:
+        ip = item.get("ip")
+        if not ip:
+            continue
+        if ip not in by_ip:
+            by_ip[ip] = {
+                "ip": ip, "endpoint": item.get("endpoint") or "",
+                "name": item.get("name") or "", "hardware": "",
+                "scopes": [], "xaddrs": "", "mac": item.get("mac") or "",
+                "serial": item.get("serial") or "", "model": item.get("model") or "",
+                "firmware": item.get("firmware") or "",
+                "http_port": item.get("http_port"), "command_port": None,
+                "dhcp": None, "activated": item.get("activated"),
+                "source": item.get("source") or "extra",
+            }
+            continue
+        current = by_ip[ip]
+        for key in ("endpoint", "name", "model", "serial", "firmware", "mac",
+                    "http_port", "activated"):
+            if item.get(key) and not current.get(key):
+                current[key] = item[key]
+        source = current.get("source") or ""
+        extra_source = item.get("source") or ""
+        if extra_source and extra_source not in source.split("+"):
+            current["source"] = (source + "+" + extra_source).strip("+")
+    return list(by_ip.values())
+
+
 @settings_bp.route("/api/onvif/discover", methods=["POST"])
 @admin_required
 def api_onvif_discover():
@@ -1047,6 +1151,10 @@ def api_onvif_discover():
     payload = request.get_json(silent=True) or {}
     timeout = float(payload.get("timeout", 4.0))
     timeout = max(1.0, min(timeout, 15.0))
+    methods = payload.get("methods") or []
+    if isinstance(methods, str):
+        methods = [methods]
+    methods = {str(m).lower() for m in methods}
 
     # --- Ленивая загрузка модулей с защитой от отсутствия ---
     onvif_fn = None
@@ -1084,13 +1192,52 @@ def api_onvif_discover():
 
     merged = _merge_discovery_results(onvif_devices, sadp_devices)
 
+    extra = []
+    extra_fns = {}
+    if "ssdp" in methods:
+        try:
+            from network_discovery import discover_ssdp
+            extra_fns["ssdp"] = discover_ssdp
+        except Exception as exc:
+            logger.exception("SSDP discovery недоступен: %s", exc)
+    if "dahua" in methods:
+        try:
+            from network_discovery import discover_dahua
+            extra_fns["dahua"] = discover_dahua
+        except Exception as exc:
+            logger.exception("Dahua discovery недоступен: %s", exc)
+    if extra_fns:
+        with _cf.ThreadPoolExecutor(max_workers=len(extra_fns)) as ex:
+            futures = {
+                ex.submit(_safe_run, fn): name
+                for name, fn in extra_fns.items()
+            }
+            for future in _cf.as_completed(futures):
+                try:
+                    extra.extend(future.result() or [])
+                except Exception as exc:
+                    logger.exception("Discovery %s: %s", futures[future], exc)
+    merged = _merge_extra_discovery(merged, extra)
+
+    if "isapi" in methods and merged:
+        try:
+            from network_discovery import enrich_with_isapi
+            merged = enrich_with_isapi(merged, timeout=min(timeout, 3.0))
+        except Exception as exc:
+            logger.exception("ISAPI probe недоступен: %s", exc)
+
+    def _count(source):
+        return sum(1 for d in merged if source in (d.get("source") or "").split("+"))
+
     return jsonify({
         "ok": True,
         "count": len(merged),
         "by_source": {
-            "onvif": sum(1 for d in merged if d.get("source") == "onvif"),
-            "sadp": sum(1 for d in merged if d.get("source") == "sadp"),
-            "both": sum(1 for d in merged if d.get("source") == "onvif+sadp"),
+            "onvif": _count("onvif"),
+            "sadp": _count("sadp"),
+            "ssdp": _count("ssdp"),
+            "dahua": _count("dahua"),
+            "isapi": _count("isapi"),
         },
         "devices": merged,
     })
@@ -1207,7 +1354,7 @@ def api_onvif_add_camera():
     archive_cfg = st["config"].get("archive", {})
     mode = new_cfg.get("record_mode", "off")
     archive_on = (
-            archive_cfg.get("enabled", False)
+            _archive_storage_status().get("available", False)
             and archive_cfg.get("record_all", True)
     )
 

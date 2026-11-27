@@ -5,6 +5,15 @@
 <div class="card">
     <h2 style="margin-top:0">Архив записей</h2>
     <p class="muted">Корневой путь: {{ archive_root }}</p>
+    {% if not archive_storage.available %}
+    <p style="color:#f0a35e; margin-bottom:0">
+        ⚠ {{ archive_storage.reason }}. Запись не активна.
+    </p>
+    {% else %}
+    <p class="muted" style="margin-bottom:0">
+        Внешнее хранилище подключено · свободно {{ archive_storage.free_gb }} ГБ
+    </p>
+    {% endif %}
 </div>
 
 {% for item in cams_data %}

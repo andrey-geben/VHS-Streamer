@@ -1,74 +1,116 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ cam_name }} — VHS-Streamer</title>
     <style>
-        html, body {
-            margin: 0;
-            height: 100%;
-            background: #0a0d12;
-            color: #93a1b5;
-            font-family: "Segoe UI", system-ui, Arial, sans-serif;
-            overflow: hidden;
-        }
+        html, body { margin: 0; height: 100%; background: #0a0d12; color: #93a1b5; font-family: "Segoe UI", system-ui, Arial, sans-serif; overflow: hidden; }
         .wrap { position: relative; width: 100%; height: 100%; }
-        .frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
-        .offline {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            font-size: 14px;
-            letter-spacing: .2px;
-        }
+        video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; display: none; }
+        .offline { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 14px; letter-spacing: .2px; }
         .offline .icon { font-size: 30px; opacity: .5; }
-        .wrap.online .frame { display: block; }
+        .wrap.online video { display: block; }
         .wrap.online .offline { display: none; }
+        #error { position: absolute; left: 10px; right: 10px; bottom: 10px; color: #ff9aa2; font-size: 11px; text-align: center; display: none; }
     </style>
 </head>
 <body>
 <div class="wrap" id="wrap">
-    <div class="offline" id="offline">
-        <span class="icon">📷</span>
-        <span>Нет сигнала</span>
-    </div>
-    <iframe class="frame" id="frame" allow="autoplay; fullscreen" scrolling="no"></iframe>
+    <div class="offline" id="offline"><span class="icon">📷</span><span id="offlineText">Нет сигнала</span></div>
+    <video id="video" autoplay muted playsinline></video>
+    <div id="error"></div>
 </div>
 <script>
-    // Плеер сам решает, что показать: пока входящий raw-путь не готов —
-    // «Нет сигнала». MediaMTX грузим только когда путь реально есть,
-    // иначе он отдаёт JSON-ошибку прямо в кадр.
-    const STREAM_URL = {{ stream_url|tojson }};
-    const STATUS_URL = '/api/cameras/status?ids=' + encodeURIComponent({{ cam_id|tojson }});
-    const wrap = document.getElementById('wrap');
-    const frame = document.getElementById('frame');
+    const WHEP_URL = {{ whep_url|tojson }};
+    const MTX_USER = {{ mtx_user|tojson }};
+    const MTX_PASS = {{ mtx_pass|tojson }};
+    const STATUS_URL = "/api/cameras/status?ids=" + encodeURIComponent({{ cam_id|tojson }});
+    const wrap = document.getElementById("wrap");
+    const video = document.getElementById("video");
+    const errorBox = document.getElementById("error");
+    let pc = null, started = false, connecting = false;
+
+    function showError(text) {
+        errorBox.textContent = text || "";
+        errorBox.style.display = text ? "block" : "none";
+    }
+
+    function waitIce(peer) {
+        return new Promise((resolve) => {
+            if (peer.iceGatheringState === "complete") return resolve();
+            const timer = setTimeout(finish, 1800);
+            function finish() {
+                clearTimeout(timer);
+                peer.removeEventListener("icegatheringstatechange", check);
+                resolve();
+            }
+            function check() { if (peer.iceGatheringState === "complete") finish(); }
+            peer.addEventListener("icegatheringstatechange", check);
+        });
+    }
+
+    async function connect() {
+        if (started || connecting) return;
+        connecting = true;
+        showError("");
+        try {
+            pc = new RTCPeerConnection({ iceServers: [] });
+            pc.addTransceiver("video", { direction: "recvonly" });
+            pc.addTransceiver("audio", { direction: "recvonly" });
+            pc.ontrack = (event) => {
+                video.srcObject = event.streams[0] || new MediaStream([event.track]);
+                video.play().catch(() => {});
+                wrap.classList.add("online");
+            };
+            pc.onconnectionstatechange = () => {
+                if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+                    started = false;
+                    connecting = false;
+                    wrap.classList.remove("online");
+                    showError("WebRTC: " + pc.connectionState);
+                }
+            };
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await waitIce(pc);
+            const auth = "Basic " + btoa(MTX_USER + ":" + MTX_PASS);
+            const response = await fetch(WHEP_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/sdp", "Authorization": auth },
+                body: offer.sdp,
+            });
+            if (!response.ok) throw new Error("WHEP HTTP " + response.status);
+            const answer = await response.text();
+            if (!answer.trim()) throw new Error("WHEP: пустой ответ");
+            await pc.setRemoteDescription({ type: "answer", sdp: answer });
+            started = true;
+            connecting = false;
+        } catch (error) {
+            connecting = false;
+            started = false;
+            wrap.classList.remove("online");
+            showError(String(error.message || error));
+            try { if (pc) pc.close(); } catch (e) {}
+        }
+    }
 
     async function tick() {
         let ready = false;
         try {
-            const r = await fetch(STATUS_URL, { cache: 'no-store' });
-            if (r.ok) {
-                const data = await r.json();
+            const response = await fetch(STATUS_URL, { cache: "no-store" });
+            if (response.ok) {
+                const data = await response.json();
                 const info = data[{{ cam_id|tojson }}] || {};
                 ready = !!(info.raw_ready || info.connected);
             }
-        } catch (e) { /* сервер недоступен — считаем, что сигнала нет */ }
-
+        } catch (error) { /* нет сигнала */ }
         if (ready) {
-            if (frame.getAttribute('src') !== STREAM_URL) {
-                frame.setAttribute('src', STREAM_URL);
-            }
-            wrap.classList.add('online');
+            document.getElementById("offlineText").textContent = "Подключение…";
+            connect();
         } else {
-            if (frame.getAttribute('src')) {
-                frame.setAttribute('src', 'about:blank');
-            }
-            wrap.classList.remove('online');
+            wrap.classList.remove("online");
+            document.getElementById("offlineText").textContent = "Нет сигнала";
         }
     }
 

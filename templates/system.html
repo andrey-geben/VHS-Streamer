@@ -1,0 +1,12 @@
+﻿<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Система — VHS-Streamer</title>
+<style>
+body{margin:0;background:#11161d;color:#e7edf4;font-family:Segoe UI,Arial,sans-serif}header{display:flex;justify-content:space-between;padding:16px 24px;background:#1e2126;border-bottom:1px solid #2a2f37}header a{color:#9fc9ff;text-decoration:none;margin-left:16px}main{max-width:1000px;margin:0 auto;padding:28px}h1{font-size:28px;margin:0 0 8px}.muted{color:#8b96a5}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}.card{background:#1a222c;border:1px solid #2a3a4a;border-radius:10px;padding:20px}.card h2{margin:0 0 8px}.status{display:inline-block;margin-top:12px;padding:4px 8px;border-radius:4px;font-size:11px;background:#2a3a4a;color:#9fb2c4}.status.on{background:#17422f;color:#76d5a4}.status.off{background:#4a2025;color:#ff9aa2}.card a{display:inline-block;margin-top:12px;color:#59c7ff;text-decoration:none}.note{margin-top:24px;padding:14px;background:#17212b;border-left:3px solid #e3b04b;color:#b9c6d2;font-size:13px;line-height:1.5}
+</style></head><body>
+<header><b>VHS-Streamer</b><nav><a href="/">Камеры</a><a href="/settings">Настройки</a><a href="/system">Система</a></nav></header>
+<main><h1>Единая система</h1><p class="muted">Streamer — источник видео и ONVIF-событий. Сопряжение с аналитикой и картой охраны.</p>
+<div class="grid">
+{% for name, purpose, url, online in partners %}<div class="card"><h2>VHS-{{ name }}</h2><p class="muted">{{ purpose }}</p>{% if url %}<div class="status {{ 'on' if online else 'off' }}">{{ 'онлайн' if online else 'недоступен' }}</div><a href="{{ url }}" target="_blank" rel="noopener">Открыть VHS-{{ name }}</a>{% else %}<div class="status off">URL не задан</div>{% endif %}</div>{% endfor %}
+</div><div class="note">Чтобы включить сопряжение, задайте <code>VHS_VIEWER_URL</code> и <code>VHS_SECURITY_URL</code> в окружении процесса Streamer. Единый вход пока не включён: модули обмениваются ссылками и health-запросами.</div>
+</main></body></html>

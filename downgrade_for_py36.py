@@ -19,6 +19,8 @@
     * set[X]       →  Set[X]
     * tuple[...]   →  Tuple[...]
     * frozenset[X] →  FrozenSet[X]
+    * capture_output=True → stdout=PIPE, stderr=PIPE
+    * text=True → universal_newlines=True (для subprocess)
     * добавляет "from typing import ..." где нужно
 
 Безопасность:
@@ -45,6 +47,10 @@ TYPE_SUBSTITUTIONS = [
     (re.compile(r"\bfrozenset\s*\["), "FrozenSet["),
 ]
 
+# Python 3.7+ аргументы subprocess, которых нет в 3.6.
+RE_CAPTURE_OUTPUT = re.compile(r"\bcapture_output\s*=\s*True\b")
+RE_TEXT_TRUE = re.compile(r"\btext\s*=\s*True\b")
+
 # Что нужно импортировать из typing
 TYPING_NAMES = {
     "Optional", "List", "Dict", "Set", "Tuple", "FrozenSet", "Union", "Any",
@@ -69,6 +75,8 @@ def apply_replacements(text: str) -> str:
     # 2. list[ → List[, dict[ → Dict[ и т.д.
     for pattern, repl in TYPE_SUBSTITUTIONS:
         text = pattern.sub(repl, text)
+    text = RE_CAPTURE_OUTPUT.sub("stdout=subprocess.PIPE, stderr=subprocess.PIPE", text)
+    text = RE_TEXT_TRUE.sub("universal_newlines=True", text)
     return text
 
 
@@ -97,8 +105,9 @@ def add_typing_import(text: str) -> str:
     lines = text.splitlines(keepends=True)
     last_import_idx = -1
     for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith("import ") or stripped.startswith("from "):
+        # Только импорты верхнего уровня. Импорт внутри функции не должен
+        # становиться точкой вставки typing-импорта.
+        if line.startswith("import ") or line.startswith("from "):
             last_import_idx = i
 
     new_line = "from typing import " + ", ".join(sorted(used)) + "\n"
@@ -124,6 +133,9 @@ def process_file(path: Path) -> str:
     """
     try:
         original = path.read_text(encoding="utf-8")
+        had_bom = original.startswith("\ufeff")
+        if had_bom:
+            original = original.lstrip("\ufeff")
     except Exception as e:
         print(f"    ! не удалось прочитать: {e}")
         return "error"
@@ -135,6 +147,9 @@ def process_file(path: Path) -> str:
         return "error"
 
     if new_text == original:
+        if had_bom:
+            path.write_text(original, encoding="utf-8")
+            return "changed"
         return "unchanged"
 
     # Проверяем, что результат компилируется
@@ -187,9 +202,9 @@ def main():
         result = process_file(f)
         stats[result] += 1
         if result == "changed":
-            print(f"    ✓ изменён")
+            print("    [ok] изменён")
         elif result == "error":
-            print(f"    ✗ ошибка")
+            print("    [error] ошибка")
 
     print()
     print(f"Итого: изменено {stats['changed']}, "
@@ -198,7 +213,7 @@ def main():
 
     if stats["error"] > 0:
         print()
-        print("⚠ Некоторые файлы не были обработаны.")
+        print("[!] Некоторые файлы не были обработаны.")
         print("  Проверьте вручную — вывод выше.")
         sys.exit(1)
 

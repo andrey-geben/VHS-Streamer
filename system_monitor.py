@@ -41,6 +41,9 @@ _gpu_state = {"data": [], "ts": 0.0, "error": None}
 _gpu_lock = threading.Lock()
 _gpu_thread_started = False
 
+# --- Счётчики сети: считаем скорость между вызовами /api/system/stats ---
+_net_state = {"ts": 0.0, "sent": 0, "recv": 0}
+
 
 # ======================================================================
 # CPU / RAM / диски — через psutil (быстро)
@@ -82,6 +85,31 @@ def _get_ram_stats() -> dict:
         logger.warning("ram stats: %s", e)
         return {"total_mb": None, "used_mb": None,
                 "available_mb": None, "percent": None}
+
+
+def _get_network_stats() -> dict:
+    """Скорость сети в Мбит/с с момента предыдущего вызова."""
+    try:
+        counters = psutil.net_io_counters()
+    except Exception as e:
+        logger.warning("network stats: %s", e)
+        return {"sent_mbps": None, "recv_mbps": None,
+                "sent_mb": None, "recv_mb": None}
+    now = time.time()
+    sent = int(counters.bytes_sent or 0)
+    recv = int(counters.bytes_recv or 0)
+    sent_mbps = recv_mbps = None
+    elapsed = now - float(_net_state.get("ts") or 0.0)
+    if elapsed > 0.05 and _net_state.get("ts"):
+        sent_mbps = round((sent - _net_state["sent"]) * 8 / elapsed / 1_000_000, 2)
+        recv_mbps = round((recv - _net_state["recv"]) * 8 / elapsed / 1_000_000, 2)
+    _net_state.update({"ts": now, "sent": sent, "recv": recv})
+    return {
+        "sent_mbps": sent_mbps,
+        "recv_mbps": recv_mbps,
+        "sent_mb": round(sent / 1024 / 1024, 1),
+        "recv_mb": round(recv / 1024 / 1024, 1),
+    }
 
 
 def _get_disk_stats() -> list:
@@ -316,6 +344,7 @@ def get_system_stats() -> dict:
         "cpu": _get_cpu_stats(),
         "ram": _get_ram_stats(),
         "disks": _get_disk_stats(),
+        "network": _get_network_stats(),
         "gpu": _get_gpu_stats(),
         "gpu_ready": gpu_ready,      # true → фоновый поток уже отработал
         "gpu_error": gpu_error,      # текст ошибки (если была)

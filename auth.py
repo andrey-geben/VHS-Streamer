@@ -18,6 +18,8 @@
     2. API-токен — заголовок `X-API-Token` или ?token=... для внешних систем.
 """
 from functools import wraps
+
+import vhs_sso
 from flask import (
     session, request, redirect, url_for, jsonify,
     current_app, abort, g,
@@ -99,8 +101,19 @@ def _lookup_mtx_token(token: str) -> dict | None:
 
 
 def get_mtx_token() -> str | None:
-    """Текущий токен из сессии (для шаблонов, шаг A.4)."""
-    return session.get("mtx_token")
+    """Текущий валидный токен из сессии (для шаблонов, шаг A.4).
+
+    После перезапуска Streamer или смены SECRET_KEY старый токен в cookie
+    может быть подписан уже недействительным ключом. В этом случае
+    возвращаем None, чтобы вызывающий код создал новый токен.
+    """
+    token = session.get("mtx_token")
+    if not token:
+        return None
+    if _lookup_mtx_token(token) is None:
+        session.pop("mtx_token", None)
+        return None
+    return token
 
 
 def _get_user_entry(username: str) -> dict | None:
@@ -269,6 +282,18 @@ def _current_user() -> dict | None:
     user = session.get("user")
     if user:
         return _refresh_from_config(user)
+
+    # Общий SSO-cookie между VHS-модулями (один хост, разные порты)
+    secret = (security.get("sso_secret") or "").strip()
+    sso_user = vhs_sso.read(secret)
+    if sso_user:
+        refreshed = _find_user(sso_user["username"], None) if False else {
+            "username": sso_user["username"],
+            "role": sso_user.get("role", "viewer"),
+            "cameras": None,
+        }
+        session["user"] = refreshed
+        return refreshed
     return None
 
 

@@ -2,115 +2,185 @@
 {% block title %}Камеры — VHS-Streamer{% endblock %}
 {% block content %}
 
-<div class="card" style="padding:12px 16px" id="summary-bar">
-    <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; font-size:0.9em">
+<style>
+.streamer-mosaic{max-width:1600px;margin:0 auto;padding:18px 22px 0;min-height:calc(100vh - 190px)}
+.mosaic-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:14px}
+.mosaic-kicker{color:#d3a85a;font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+.mosaic-head h1{margin:3px 0 0;font-size:27px}
+.mosaic-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.mosaic-controls select,.mosaic-controls input{background:#0c1b25;border:1px solid #2a4152;color:#dcecf1;border-radius:4px;padding:7px 9px;font-size:11px}
+.mosaic-controls input{width:190px}
+.mosaic-btn{display:inline-flex;align-items:center;justify-content:center;background:#0c1b25;border:1px solid #2a4152;color:#dcecf1;border-radius:4px;padding:7px 10px;font-size:10px;text-decoration:none;cursor:pointer}
+.mosaic-btn:hover{border-color:#49c6d4;color:#fff}
+.mosaic-status{display:flex;align-items:center;gap:15px;flex-wrap:wrap;border:1px solid #243b4b;border-radius:6px;background:#0b1720;padding:8px 11px;margin-bottom:14px;font-size:10px;color:#8ba6b2}
+.mosaic-status b{color:#e8f5f8}
+.mosaic-legend{display:flex;align-items:center;gap:12px;margin-left:auto;color:#8ba6b2}
+.mosaic-legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:1px}
+#cameraGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.cam-card{background:#0b1922;border:1px solid #243b4b;border-radius:7px;overflow:hidden;min-width:0;transition:border-color .15s}
+.cam-card:hover{border-color:#3d6d7d}
+.cam-card.is-event{border-color:#c04f5a}
+.cam-preview{position:relative;aspect-ratio:16/9;background:#07131c;overflow:hidden;cursor:pointer}
+.cam-preview .cam-iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#07131c}
+.cam-preview .cam-offline{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:#6d8793;font-size:10px;background:#07131c}
+.cam-preview .cam-offline__icon{font-size:22px;opacity:.55}
+.cam-overlay{position:absolute;left:0;right:0;bottom:0;z-index:3;padding:26px 10px 9px;background:linear-gradient(transparent,#061016f2);pointer-events:none}
+.cam-name{display:block;color:#eef9fb;font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px #000}
+.cam-sub{display:flex;align-items:center;gap:6px;margin-top:3px;color:#8ba6b2;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cam-sub .online{color:#6fe0a0}
+.cam-sub .offline{color:#ff9a9a}
+.cam-actions-overlay{position:absolute;top:7px;right:7px;z-index:4;display:flex;align-items:center;gap:3px}
+.cam-actions-overlay button,.cam-actions-overlay a{display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 5px;border:1px solid #315163;border-radius:3px;background:#07141ddd;color:#cfe9ef;font-size:12px;text-decoration:none;cursor:pointer}
+.cam-actions-overlay button:hover,.cam-actions-overlay a:hover{border-color:#49c6d4;color:#fff}
+.cam-outputs{display:flex;gap:3px;align-items:center}
+.cam-outputs:empty{display:none}
+.cam-outputs a{font-size:9px;height:23px}
+.footer-monitor{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;color:#8ba6b2;font-size:9px}
+.footer-monitor b{color:#dcecf1;font-weight:600}
+.footer-monitor span{white-space:nowrap}
+@media(max-width:900px){.footer-monitor{order:3;flex-basis:100%;justify-content:flex-start}}
+.mosaic-empty{border:1px dashed #2a4152;border-radius:7px;padding:50px 20px;text-align:center;color:#8ba6b2;font-size:12px}
+@media(max-width:700px){.streamer-mosaic{padding:14px 12px 0}.mosaic-head h1{font-size:22px}.mosaic-controls input{width:135px}#cameraGrid{grid-template-columns:1fr}}
+</style>
 
-        {% if user and user.role == 'admin' %}
-        <div title="Загрузка CPU">CPU: <b id="mon-cpu-val">—</b></div>
-        <div title="Использование RAM">RAM: <b id="mon-ram-val">—</b></div>
-        <div id="mon-disks-inline" title="Заполнение дисков">Диски: —</div>
-        <div id="mon-gpu-inline" title="Загрузка GPU / VRAM">GPU: —</div>
-        <span style="color:#2a2f37">│</span>
-        {% endif %}
-
-        <div>Камер: <b>{{ sysinfo.cameras_online }}/{{ sysinfo.cameras_total }}</b></div>
-        <div>Рекордеров: <b>{{ sysinfo.recorders }}</b></div>
-        <div>Архив: <b>{{ sysinfo.archive_size }}</b></div>
-        <div>Потоков: <b>{{ sysinfo.streams_enabled }}/{{ sysinfo.streams_total }}</b></div>
-        {% if sysinfo.mediamtx_ready %}
-            <div class="status-on">● RTSP :{{ sysinfo.mediamtx_port }}</div>
-        {% endif %}
-        {% if sysinfo.duplicate_enabled %}
-            <div class="status-on">● MJPEG :{{ sysinfo.duplicate_port }}</div>
-        {% endif %}
-        <div class="muted" style="margin-left:auto; font-size:0.85em">
-            WebRTC-плеер через MediaMTX
+<div class="streamer-mosaic">
+    <div class="mosaic-head">
+        <div>
+            <div class="mosaic-kicker">Видеонаблюдение</div>
+            <h1>Мозаика камер</h1>
+        </div>
+        <div class="mosaic-controls">
+            <input type="search" id="cameraSearch" placeholder="Поиск камеры…" autocomplete="off">
+            <select id="cameraFilter" aria-label="Фильтр камер">
+                <option value="all">Все камеры</option>
+                <option value="online">Только онлайн</option>
+                <option value="offline">Только оффлайн</option>
+            </select>
+            <button type="button" class="mosaic-btn" id="mosaicRefresh">Обновить</button>
+            {% if user and user.role == 'admin' %}
+            <a class="mosaic-btn" href="{{ url_for('settings.settings_page') }}">Настройки</a>
+            {% endif %}
         </div>
     </div>
-</div>
 
-<div class="cam-grid">
-    {% for cam in cameras %}
-    {% set st = cam.get_status() %}
-    {% set rec = rec_statuses.get(cam.id) %}
-    <div class="cam-card" data-camera-id="{{ cam.id }}">
-        <div class="cam-header">
-            <div class="cam-headline">
-                <span class="cam-name" title="{{ cam.name }}">{{ cam.name }}</span>
-                <span class="cam-badges">
-                    {% if st.connected %}
-                        <span class="status-on" title="онлайн">●</span>
-                    {% else %}
-                        <span class="status-off" title="{{ st.last_error or 'оффлайн' }}">○</span>
-                    {% endif %}
-                    <span class="muted">{{ cam.id }}</span>
-                    {% if rec %}
-                        <span class="muted" title="сегментов / занято в архиве">⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ</span>
-                    {% else %}
-                        <span class="muted">запись выкл.</span>
-                    {% endif %}
-                </span>
-            </div>
-            <div class="cam-actions" style="display:flex; gap:6px; align-items:center">
-                <button class="cam-ptz-btn" type="button"
+    <div class="mosaic-status">
+        <span>Камер: <b>{{ sysinfo.cameras_online }}/{{ sysinfo.cameras_total }}</b></span>
+        <span>Потоков: <b>{{ sysinfo.streams_enabled }}/{{ sysinfo.streams_total }}</b></span>
+        <span>Архив: <b>{{ sysinfo.archive_size }}</b></span>
+        {% if sysinfo.mediamtx_ready %}<span>● RTSP :{{ sysinfo.mediamtx_port }}</span>{% endif %}
+        <div class="mosaic-legend">
+            <span><i style="background:#6fe0a0"></i>онлайн</span>
+            <span><i style="background:#ff9a9a"></i>нет сигнала</span>
+            <span><i style="background:#d3a85a"></i>архив</span>
+        </div>
+    </div>
+
+    <div id="cameraGrid" class="cam-grid">
+        {% for cam in cameras %}
+        {% set st = cam.get_status() %}
+        {% set rec = rec_statuses.get(cam.id) %}
+        <article class="cam-card{% if not st.connected %} is-offline{% endif %}" data-camera-id="{{ cam.id }}" data-online="{{ '1' if st.connected else '0' }}" data-name="{{ cam.name|lower }}">
+            <div class="cam-preview"
+                 data-camera-id="{{ cam.id }}"
+                 onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
+                 title="Клик — полный экран">
+                <div class="cam-offline">
+                    <span class="cam-offline__icon">📷</span>
+                    <span>Нет сигнала</span>
+                </div>
+                <iframe class="cam-iframe"
+                        src="/player/{{ cam.id }}"
+                        allow="autoplay; fullscreen"
+                        scrolling="no"
+                        frameborder="0"></iframe>
+
+                <div class="cam-actions-overlay" onclick="event.stopPropagation()">
+                    <button class="cam-ptz-btn" type="button"
                             data-camera-id="{{ cam.id }}"
                             style="display:none;"
                             onclick="togglePtzPanel('{{ cam.id }}')"
                             title="PTZ-управление">🎮</button>
-                <div class="cam-outputs" data-camera-id="{{ cam.id }}"></div>
-                <button class="cam-archive-btn" type="button"
-                        onclick='openArchiveModal({{ cam.id|tojson }}, {{ cam.name|tojson }})'
-                        title="Архив записей">📼</button>
-                <button class="cam-fs-btn"
-                        onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
-                        title="Полный экран">⛶</button>
-            </div>
-        </div>
-
-        <div class="cam-preview"
-             data-camera-id="{{ cam.id }}"
-             onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
-             title="Клик — полный экран">
-            <div class="cam-offline">
-                <span class="cam-offline__icon">📷</span>
-                <span>Нет сигнала</span>
-            </div>
-            <iframe class="cam-iframe"
-        src="/player/{{ cam.id }}"
-        allow="autoplay; fullscreen"
-        scrolling="no"
-        frameborder="0"></iframe>
-
-            <div class="cam-ptz-panel"
-                 id="ptz-panel-{{ cam.id }}"
-                 style="display:none;"
-                 onclick="event.stopPropagation()">
-                <div class="ptz-header">
-                    <span>PTZ</span>
-                    <button type="button" class="ptz-close"
-                            onclick="togglePtzPanel('{{ cam.id }}')">✕</button>
+                    <div class="cam-outputs" data-camera-id="{{ cam.id }}"></div>
+                    <button class="cam-archive-btn" type="button"
+                            onclick='openArchiveModal({{ cam.id|tojson }}, {{ cam.name|tojson }})'
+                            title="Архив записей">📼</button>
+                    <button class="cam-fs-btn" type="button"
+                            onclick='openFullscreen({{ cam.id|tojson }}, {{ cam.name|tojson }})'
+                            title="Полный экран">⛶</button>
                 </div>
-                <div class="ptz-grid">
-                    <button type="button" class="ptz-b" data-dir="nw">↖</button>
-                    <button type="button" class="ptz-b" data-dir="n">↑</button>
-                    <button type="button" class="ptz-b" data-dir="ne">↗</button>
-                    <button type="button" class="ptz-b" data-dir="w">←</button>
-                    <button type="button" class="ptz-b ptz-home" data-dir="home" title="Исходное положение">⌂</button>
-                    <button type="button" class="ptz-b" data-dir="e">→</button>
-                    <button type="button" class="ptz-b" data-dir="sw">↙</button>
-                    <button type="button" class="ptz-b" data-dir="s">↓</button>
-                    <button type="button" class="ptz-b" data-dir="se">↘</button>
+
+                <div class="cam-overlay">
+                    <span class="cam-name" title="{{ cam.name }}">{{ cam.name }}</span>
+                    <span class="cam-sub">
+                        {% if st.connected %}<span class="online">● онлайн</span>{% else %}<span class="offline">○ нет сигнала</span>{% endif %}
+                        <span>{{ cam.id }}</span>
+                        {% if rec %}<span>· ⏺ {{ rec.segments }} · {{ rec.archive_size_mb }} МБ</span>{% endif %}
+                    </span>
                 </div>
-                <div class="ptz-zoom">
-                    <button type="button" class="ptz-b ptz-z" data-zoom="1" title="Приблизить">＋</button>
-                    <button type="button" class="ptz-b ptz-z" data-zoom="-1" title="Отдалить">−</button>
+
+                <div class="cam-ptz-panel"
+                     id="ptz-panel-{{ cam.id }}"
+                     style="display:none;"
+                     onclick="event.stopPropagation()">
+                    <div class="ptz-header">
+                        <span>PTZ</span>
+                        <button type="button" class="ptz-close"
+                                onclick="togglePtzPanel('{{ cam.id }}')">✕</button>
+                    </div>
+                    <div class="ptz-grid">
+                        <button type="button" class="ptz-b" data-dir="nw">↖</button>
+                        <button type="button" class="ptz-b" data-dir="n">↑</button>
+                        <button type="button" class="ptz-b" data-dir="ne">↗</button>
+                        <button type="button" class="ptz-b" data-dir="w">←</button>
+                        <button type="button" class="ptz-b ptz-home" data-dir="home" title="Исходное положение">⌂</button>
+                        <button type="button" class="ptz-b" data-dir="e">→</button>
+                        <button type="button" class="ptz-b" data-dir="sw">↙</button>
+                        <button type="button" class="ptz-b" data-dir="s">↓</button>
+                        <button type="button" class="ptz-b" data-dir="se">↘</button>
+                    </div>
+                    <div class="ptz-zoom">
+                        <button type="button" class="ptz-b ptz-z" data-zoom="1" title="Приблизить">＋</button>
+                        <button type="button" class="ptz-b ptz-z" data-zoom="-1" title="Отдалить">−</button>
+                    </div>
                 </div>
             </div>
-        </div>
-
+        </article>
+        {% endfor %}
     </div>
-    {% endfor %}
+    <div class="mosaic-empty" id="cameraEmpty" hidden>
+        Камеры не найдены. Добавьте камеру в настройках.
+    </div>
 </div>
+
+<script>
+(function () {
+    const search = document.getElementById('cameraSearch');
+    const filter = document.getElementById('cameraFilter');
+    const grid = document.getElementById('cameraGrid');
+    const empty = document.getElementById('cameraEmpty');
+    const refresh = document.getElementById('mosaicRefresh');
+    function applyFilter() {
+        if (!grid) return;
+        const query = (search?.value || '').trim().toLowerCase();
+        const mode = filter?.value || 'all';
+        let visible = 0;
+        grid.querySelectorAll('.cam-card').forEach(card => {
+            const matchesQuery = !query || (card.dataset.name || '').includes(query) ||
+                (card.dataset.cameraId || '').toLowerCase().includes(query);
+            const matchesMode = mode === 'all' ||
+                (mode === 'online' && card.dataset.online === '1') ||
+                (mode === 'offline' && card.dataset.online !== '1');
+            const show = matchesQuery && matchesMode;
+            card.style.display = show ? '' : 'none';
+            if (show) visible += 1;
+        });
+        if (empty) empty.hidden = visible !== 0;
+    }
+    search?.addEventListener('input', applyFilter);
+    filter?.addEventListener('change', applyFilter);
+    refresh?.addEventListener('click', () => window.location.reload());
+})();
+</script>
 
 <div id="fs-overlay" class="fs-overlay">
     <div class="fs-toolbar">
@@ -736,13 +806,13 @@ const SERVER_HOST = window.location.hostname;
 const WEBRTC_PORT = 8889;
 
 function _mtxUrl(cameraId) {
-    let url = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT +
-              '/__raw_' + encodeURIComponent(cameraId) + '/';
+    let auth = '';
     if (window.VHS_MTX_USER && window.VHS_MTX_PASS) {
-        url += '?user=' + encodeURIComponent(window.VHS_MTX_USER) +
-               '&pass=' + encodeURIComponent(window.VHS_MTX_PASS);
+        auth = encodeURIComponent(window.VHS_MTX_USER) + ':' +
+               encodeURIComponent(window.VHS_MTX_PASS) + '@';
     }
-    return url;
+    return 'http://' + auth + SERVER_HOST + ':' + WEBRTC_PORT +
+           '/__raw_' + encodeURIComponent(cameraId) + '/';
 }
 
 let _ptzCapabilities = {};
@@ -846,13 +916,13 @@ async function refreshCameraStatus() {
 // Исходящие потоки (клоны): индикатор + просмотр одного
 // =====================================================================
 function _mtxPathUrl(path) {
-    let url = 'http://' + SERVER_HOST + ':' + WEBRTC_PORT + '/' +
-              path.replace(/^\//, '') + '/';
+    let auth = '';
     if (window.VHS_MTX_USER && window.VHS_MTX_PASS) {
-        url += '?user=' + encodeURIComponent(window.VHS_MTX_USER) +
-               '&pass=' + encodeURIComponent(window.VHS_MTX_PASS);
+        auth = encodeURIComponent(window.VHS_MTX_USER) + ':' +
+               encodeURIComponent(window.VHS_MTX_PASS) + '@';
     }
-    return url;
+    return 'http://' + auth + SERVER_HOST + ':' + WEBRTC_PORT + '/' +
+           path.replace(/^\//, '') + '/';
 }
 
 function openPathFullscreen(path, title) {
@@ -1592,6 +1662,19 @@ async function refreshSystemStats() {
                 gpuBox.innerHTML = 'GPU: ' + parts.join(' · ');
             }
         }
+
+        // --- Сеть ---
+        const netVal = document.getElementById('mon-net-val');
+        if (netVal) {
+            const net = d.network || {};
+            if (net.recv_mbps == null && net.sent_mbps == null) {
+                netVal.textContent = '—';
+            } else {
+                const down = net.recv_mbps == null ? '—' : net.recv_mbps.toFixed(1);
+                const up = net.sent_mbps == null ? '—' : net.sent_mbps.toFixed(1);
+                netVal.textContent = '↓ ' + down + ' / ↑ ' + up + ' Мбит/с';
+            }
+        }
     } catch (e) {
         // тихо — UI не должен падать
         console.debug('refreshSystemStats:', e);
@@ -1612,4 +1695,16 @@ async function refreshSystemStats() {
 })();
 </script>
 
+{% endblock %}
+
+{% block footer_monitor %}
+{% if user and user.role == 'admin' %}
+<div class="footer-monitor" id="footerMonitor">
+    <span title="Загрузка CPU">CPU <b id="mon-cpu-val">—</b></span>
+    <span title="Использование RAM">RAM <b id="mon-ram-val">—</b></span>
+    <span id="mon-disks-inline" title="Заполнение дисков">Диски: —</span>
+    <span id="mon-gpu-inline" title="Загрузка GPU / VRAM">GPU: —</span>
+    <span title="Сетевой трафик">Сеть <b id="mon-net-val">—</b></span>
+</div>
+{% endif %}
 {% endblock %}

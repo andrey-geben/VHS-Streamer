@@ -15,7 +15,8 @@
         // Тема до отрисовки — чтобы не мигало белым/тёмным
         (function () {
             try {
-                var t = localStorage.getItem('vhs-theme') || 'dark';
+                var m = document.cookie.match(/(?:^|;\s*)vhs_theme=(light|dark)(?:;|$)/);
+                var t = (m && m[1]) || localStorage.getItem('vhs-theme') || 'dark';
                 document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
             } catch (e) {}
         })();
@@ -96,8 +97,10 @@
                  font-size:0.75em; margin-left:4px;
                  line-height:1.6em;"></span>
         </a>
+        <a href="{{ url_for('help_page') }}" class="{% if request.endpoint == 'help_page' %}active{% endif %}">Справка</a>
         {% if user and user.role == 'admin' %}
         <a href="{{ url_for('settings.settings_page') }}" class="{% if request.endpoint == 'settings.settings_page' %}active{% endif %}">Настройки</a>
+        <a href="{{ url_for('integrations.system_page') }}" class="{% if request.endpoint == 'integrations.system_page' %}active{% endif %}">Система</a>
         <a href="{{ url_for('api_status') }}">API</a>
         {% endif %}
                 {% if user %}
@@ -137,6 +140,7 @@
             var next = cur === 'light' ? 'dark' : 'light';
             document.documentElement.setAttribute('data-theme', next);
             try { localStorage.setItem('vhs-theme', next); } catch (e) {}
+            document.cookie = 'vhs_theme=' + next + '; path=/; max-age=31536000; SameSite=Lax';
             sync();
         });
     })();
@@ -161,7 +165,11 @@
     gap: 8px;
 ">
     <span>{{ APP_FOOTER }}</span>
+    {% block footer_monitor %}{% endblock %}
     <span>
+        <a href="{{ url_for('help_page') }}"
+           style="color:#6cb2ff; text-decoration:none">Справка</a>
+        &nbsp;·&nbsp;
         <a href="{{ url_for('about_page') }}"
            style="color:#6cb2ff; text-decoration:none">О программе</a>
     </span>

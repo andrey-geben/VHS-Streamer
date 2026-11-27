@@ -20,6 +20,12 @@
         </button>
         <span class="muted" id="onvif-status" style="margin-left:10px; font-size:0.9em"></span>
     </div>
+    <div class="form-row" style="flex-wrap:wrap; gap:14px; margin-bottom:12px">
+        <label><input type="checkbox" id="disc-ssdp" checked> SSDP / UPnP</label>
+        <label><input type="checkbox" id="disc-dahua" checked> Dahua / Amcrest</label>
+        <label><input type="checkbox" id="disc-isapi" checked> ISAPI (Hikvision)</label>
+        <span class="muted" style="font-size:0.82em">дополнительные методы к ONVIF/SADP</span>
+    </div>
 
     <div class="form-row" style="margin-top:10px">
         <label style="font-size:0.9em">Если камера не найдена автоматически — введите endpoint вручную</label>
@@ -101,13 +107,15 @@
 <!-- ============= АРХИВ ============= -->
 <div class="card">
     <h3 style="margin-top:0">Архив (циклическая запись)</h3>
-    <div class="form-row"><label>Включён</label>
-        <input type="checkbox" id="arch-enabled"></div>
+    <input type="checkbox" id="arch-enabled" hidden>
+    <div class="form-row"><label>Внешний носитель</label>
+        <b id="arch-storage-status">проверка…</b></div>
+    <p class="muted" id="arch-storage-reason" style="margin-top:-4px; margin-bottom:12px"></p>
     <div class="form-row"><label>Путь архива (общий)</label>
-        <input type="text" id="arch-path" placeholder="./archive"></div>
+        <input type="text" id="arch-path" placeholder="/mnt/vhs-archive"></div>
     <p class="muted" style="margin-top:-4px; margin-bottom:12px">
-        Индивидуальный путь для каждой камеры задаётся в её настройках
-        (режим записи «Постоянная» или «По событиям»).
+        Запись возможна только на отдельный внешний носитель. Если он не
+        подключён или путь указывает на системный диск, запись не активна.
     </p>
     <div class="form-row"><label>Длина сегмента (мин)</label>
         <input type="number" id="arch-segment" min="1" max="120"></div>
@@ -1111,7 +1119,12 @@ async function autofillRtsp() {
 // ЗАПИСЬ В АРХИВ — режим
 // =====================================================================
 function onRecordModeChange() {
-    const mode = document.getElementById('m-record-mode').value;
+    let mode = document.getElementById('m-record-mode').value;
+    if (mode !== 'off' && window.archiveStorageAvailable === false) {
+        document.getElementById('m-record-mode').value = 'off';
+        mode = 'off';
+        showToast('Внешнее хранилище не подключено — запись недоступна', true);
+    }
     const on = (mode !== 'off');
 
     document.getElementById('row-archive-path').style.display = on ? 'grid' : 'none';
@@ -1495,6 +1508,19 @@ function bindPtzButtons() {
 // =====================================================================
 async function loadArchive() {
     const c = await api('GET', '/api/archive/config');
+    const storage = c.storage || {};
+    window.archiveStorageAvailable = !!storage.available;
+    const statusEl = document.getElementById('arch-storage-status');
+    const reasonEl = document.getElementById('arch-storage-reason');
+    if (storage.available) {
+        statusEl.textContent = `подключён · свободно ${storage.free_gb} ГБ`;
+        statusEl.style.color = '#5fd38a';
+        reasonEl.textContent = storage.path || '';
+    } else {
+        statusEl.textContent = 'не подключён';
+        statusEl.style.color = '#f0a35e';
+        reasonEl.textContent = storage.reason || 'Настройте путь к внешнему носителю.';
+    }
     document.getElementById('arch-enabled').checked = !!c.enabled;
     document.getElementById('arch-path').value = c.path || '';
     document.getElementById('arch-segment').value = c.segment_minutes || 5;
@@ -1516,7 +1542,14 @@ async function saveArchive() {
     };
     try {
         const r = await api('POST', '/api/archive/config', payload);
-        showToast(r.restart_required ? 'Сохранено. Требуется перезапуск!' : 'Настройки архива сохранены');
+        const storage = r.storage || {};
+        window.archiveStorageAvailable = !!storage.available;
+        if (!storage.available) {
+            showToast(storage.reason || 'Внешнее хранилище не подключено — запись не активна', true);
+        } else {
+            showToast(r.restart_required ? 'Сохранено. Требуется перезапуск!' : 'Настройки архива сохранены');
+        }
+        await loadArchive();
     } catch (e) {}
 }
 
@@ -1990,29 +2023,34 @@ function downloadDiagnostics() {
 // Значок источника устройства (ONVIF / SADP / оба)
 function renderDiscoverySourceBadge(source) {
     const s = (source || '').toLowerCase();
-    if (s === 'onvif') {
-        return '<span style="background:#1e3a5f; color:#8ec5ff; ' +
-               'padding:2px 8px; border-radius:3px; font-size:0.8em">ONVIF</span>';
-    }
-    if (s === 'sadp') {
-        return '<span style="background:#4a2a2a; color:#ff8e8e; ' +
-               'padding:2px 8px; border-radius:3px; font-size:0.8em">SADP</span>';
-    }
-    if (s === 'onvif+sadp') {
-        return '<span style="background:#2a4a2a; color:#8eff8e; ' +
-               'padding:2px 8px; border-radius:3px; font-size:0.8em">' +
-               'ONVIF+SADP</span>';
-    }
-    return '<span class="muted">—</span>';
+    if (!s) return '<span class="muted">—</span>';
+    const labels = {
+        onvif: ['#1e3a5f', '#8ec5ff', 'ONVIF'],
+        sadp: ['#4a2a2a', '#ff8e8e', 'SADP'],
+        ssdp: ['#263a4a', '#9bd7ff', 'SSDP'],
+        dahua: ['#3a3020', '#ffd28a', 'Dahua'],
+        isapi: ['#2f2440', '#d7b8ff', 'ISAPI'],
+    };
+    return s.split('+').filter(Boolean).map(part => {
+        const item = labels[part] || ['#2a3440', '#c9d3dd', part.toUpperCase()];
+        return '<span style="background:' + item[0] + '; color:' + item[1] + '; ' +
+               'padding:2px 6px; border-radius:3px; font-size:0.75em; margin-right:3px">' +
+               item[2] + '</span>';
+    }).join('');
 }
 
 async function onvifDiscover() {
     const btn = document.getElementById('btn-onvif-discover');
     const status = document.getElementById('onvif-status');
     btn.disabled = true;
-    status.textContent = 'сканирую сеть (ONVIF + SADP, до 5 сек)...';
+    const methods = [];
+    if (document.getElementById('disc-ssdp')?.checked) methods.push('ssdp');
+    if (document.getElementById('disc-dahua')?.checked) methods.push('dahua');
+    if (document.getElementById('disc-isapi')?.checked) methods.push('isapi');
+    status.textContent = 'сканирую сеть (ONVIF + SADP' +
+        (methods.length ? ' + ' + methods.join(' + ') : '') + ', до 5 сек)...';
     try {
-        const r = await api('POST', '/api/onvif/discover', { timeout: 4 });
+        const r = await api('POST', '/api/onvif/discover', { timeout: 4, methods });
         _onvifDevices = r.devices || [];
         const resultsDiv = document.getElementById('onvif-results');
         const tbody = document.querySelector('#onvif-table tbody');
@@ -2069,6 +2107,9 @@ async function onvifDiscover() {
         const parts = [];
         if (bs.onvif) parts.push('ONVIF: ' + bs.onvif);
         if (bs.sadp) parts.push('SADP: ' + bs.sadp);
+        if (bs.ssdp) parts.push('SSDP: ' + bs.ssdp);
+        if (bs.dahua) parts.push('Dahua: ' + bs.dahua);
+        if (bs.isapi) parts.push('ISAPI: ' + bs.isapi);
         if (bs.both) parts.push('оба: ' + bs.both);
         status.textContent = 'найдено: ' + _onvifDevices.length +
             (parts.length ? ' (' + parts.join(', ') + ')' : '');

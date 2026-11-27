@@ -3,7 +3,9 @@ VHS-Streamer — главный сервер.
 """
 import atexit
 import logging
+import os
 import platform
+import shutil
 from urllib.parse import quote
 import threading
 import sys
@@ -149,6 +151,7 @@ from settings_api import settings_bp
 from onvif_server import onvif_bp
 from streams_api import streams_bp, _sync_mediamtx_auth
 from diagnostics import diagnostics_bp
+from integrations import integration_bp
 from mediamtx_manager import MediaMTXManager
 import mediamtx_manager as _mtx_helpers
 from preview import get_loopback_url, raw_path_name
@@ -183,10 +186,74 @@ if handle_argv(sys.argv[1:], CONFIG_PATH):
 server_cfg = config.get("server", {})
 
 if first_run_info:
-    _port = server_cfg.get("port", 8000)
+    _port = server_cfg.get("port", 8100)
     print_first_run_banner(first_run_info, f"http://127.0.0.1:{_port}")
 security_cfg = config.get("security", {})
 archive_cfg = config.get("archive", {})
+
+
+def archive_storage_status(cfg=None) -> dict:
+    """Проверяет, что архив настроен на подключённый внешний носитель."""
+    cfg = cfg if isinstance(cfg, dict) else archive_cfg
+    raw = str(cfg.get("path") or "").strip()
+    if not raw:
+        return {
+            "configured": "", "path": "", "available": False,
+            "external": False, "writable": False, "free_gb": 0,
+            "reason": "Путь к внешнему архиву не задан",
+        }
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    path = path.resolve()
+    result = {
+        "configured": raw, "path": str(path), "available": False,
+        "external": False, "writable": False, "free_gb": 0, "reason": "",
+    }
+    if BASE_DIR == path or BASE_DIR in path.parents:
+        result["reason"] = "Путь архива находится внутри системного каталога программы"
+        return result
+    if not path.exists() or not path.is_dir():
+        result["reason"] = "Внешнее хранилище не подключено: путь не найден"
+        return result
+
+    external = False
+    if os.name == "nt":
+        system_drive = os.environ.get("SystemDrive", "C:").lower()
+        external = bool(path.drive) and path.drive.lower() != system_drive
+    else:
+        try:
+            import psutil
+            mounts = [
+                str(part.mountpoint)
+                for part in psutil.disk_partitions(all=False)
+                if part.mountpoint
+            ]
+            mount = max(
+                (m for m in mounts if path == Path(m) or Path(m) in path.parents),
+                key=len, default="",
+            )
+            external = bool(mount) and mount != "/"
+        except Exception:
+            external = False
+    result["external"] = external
+    if not external:
+        result["reason"] = "Архив должен находиться на отдельном внешнем носителе"
+        return result
+    if not os.access(path, os.W_OK):
+        result["reason"] = "Нет прав на запись во внешнее хранилище"
+        return result
+    try:
+        result["free_gb"] = round(shutil.disk_usage(path).free / (1024 ** 3), 1)
+    except OSError:
+        result["free_gb"] = 0
+    result["available"] = True
+    result["writable"] = True
+    result["reason"] = "Внешнее хранилище подключено"
+    return result
+
+
+archive_storage = archive_storage_status(archive_cfg)
 dup_cfg = config.get("duplicate_stream", {})
 mediamtx_cfg = config.get("mediamtx", {})
 cameras_cfg = config.get("cameras", [])
@@ -219,7 +286,7 @@ atexit.register(_cleanup_at_exit)
 
 try:
     from proc_tree import kill_leftovers, count_bin_processes
-    if not _our_port_busy(int(server_cfg.get("port", 8000))):
+    if not _our_port_busy(int(server_cfg.get("port", 8100))):
         _orphans = count_bin_processes(BOOTSTRAP_BIN_DIR)
         if _orphans:
             logger.warning("Найдено %d зависших процессов в bin/ — закрываю", _orphans)
@@ -440,9 +507,9 @@ for cam_cfg in cameras_cfg:
         cameras[cam.id] = cam
         cam.start()
 
-        # Архив включён глобально?
+        # Архив возможен только при подключённом внешнем носителе.
         archive_on = (
-            archive_cfg.get("enabled", False)
+            archive_storage.get("available", False)
             and archive_cfg.get("record_all", True)
         )
         # Режим записи камеры: off / always / events
@@ -582,11 +649,13 @@ app.config["MEDIAMTX_HELPERS"] = {
 app.config["EVENTS_MANAGER"] = events_manager
 app.config["LOOPBACK_URLS"] = loopback_urls
 app.config["MOTION_DETECTOR_MGR"] = motion_detector_mgr
+app.config["SESSION_COOKIE_NAME"] = "vhs_streamer_session"
 
 app.register_blueprint(settings_bp)
 app.register_blueprint(onvif_bp)
 app.register_blueprint(streams_bp)
 app.register_blueprint(diagnostics_bp)
+app.register_blueprint(integration_bp)
 
 
 # ======================================================================
@@ -633,7 +702,10 @@ def login():
         u = request.form.get("username", "")
         p = request.form.get("password", "")
         if auth_mod.do_login(u, p):
-            return redirect(request.args.get("next") or url_for("index"))
+            response = redirect(request.args.get("next") or url_for("index"))
+            user = session.get("user") or {}
+            secret = (config.get("security", {}) or {}).get("sso_secret", "")
+            return auth_mod.vhs_sso.set_cookie(response, secret, user.get("username", u), user.get("role", "admin"))
         error = "Неверный логин или пароль"
     return render_template("login.html", error=error)
 
@@ -641,7 +713,8 @@ def login():
 @app.route("/logout")
 def logout():
     auth_mod.do_logout()
-    return redirect(url_for("login"))
+    response = redirect(url_for("login"))
+    return auth_mod.vhs_sso.clear_cookie(response)
 
 
 @app.route("/favicon.ico")
@@ -683,6 +756,7 @@ def about_page():
     return render_template(
         "about.html",
         user=g.user,
+        is_arm=platform.machine().lower() in ("aarch64", "arm64", "armv7l", "armv6l"),
         info={
             "version": __version__,
             "author": __author__,
@@ -691,6 +765,37 @@ def about_page():
             "url": __url__,
         },
     )
+
+
+# ======================================================================
+#  Справка
+# ======================================================================
+@app.route("/help")
+@auth_mod.login_required
+def help_page():
+    return render_template(
+        "help.html",
+        user=g.user,
+        is_arm=platform.machine().lower() in ("aarch64", "arm64", "armv7l", "armv6l"),
+        port=int(server_cfg.get("port", 8100)),
+        archive_storage=archive_storage_status(),
+        app_version=__version__,
+    )
+
+
+# ======================================================================
+#  Служебный health-check (без авторизации, только статус)
+# ======================================================================
+@app.route("/health")
+def health():
+    return jsonify({
+        "ok": True,
+        "service": "vhs-streamer",
+        "version": __version__,
+        "archive": archive_storage.get("available", False),
+        "archive_reason": archive_storage.get("reason", ""),
+        "archive_path": archive_storage.get("path", ""),
+    })
 
 
 # ======================================================================
@@ -915,6 +1020,7 @@ def archive_page():
     return render_template(
         "archive.html",
         cams_data=cams_data, archive_root=str(root), user=g.user,
+        archive_storage=archive_storage_status(),
     )
 
 
@@ -1043,9 +1149,8 @@ def api_archive_timeline(camera_id: str):
             logger.warning("[%s] Ошибка чтения событий: %s", camera_id, e)
 
     # 5) Флаг «идёт ли запись сейчас» (для предупреждения в модалке)
-    archive_cfg = config.get("archive", {})
     archive_on = (
-        archive_cfg.get("enabled", False)
+        archive_storage.get("available", False)
         and archive_cfg.get("record_all", True)
     )
     cam_mode = getattr(cam, "record_mode", "off") or "off"
@@ -1060,6 +1165,7 @@ def api_archive_timeline(camera_id: str):
         "events": events_data,
         "archive_enabled": archive_enabled,
         "cam_record_mode": cam_mode,
+        "archive_storage": archive_storage,
     })
 
 
@@ -1148,15 +1254,15 @@ def player_page(cam_id: str):
         session["mtx_token"] = token
 
     host = request.host.split(":")[0]
-    stream_url = (
-        f"http://{host}:8889/__raw_{cam_id}/"
-        f"?user={quote(username or '')}&pass={quote(token or '')}"
-    )
+    # WHEP-клиент сам отправляет Basic Auth; MediaMTX-страницу не используем.
+    whep_url = f"http://{host}:8889/__raw_{cam_id}/whep"
     return render_template(
         "player.html",
         cam_id=cam_id,
         cam_name=cam.name,
-        stream_url=stream_url,
+        whep_url=whep_url,
+        mtx_user=username or "",
+        mtx_pass=token or "",
     )
 
 
@@ -1219,7 +1325,7 @@ if __name__ == "__main__":
         logger.info("MJPEG-дублирование выключено")
 
     host = server_cfg.get("host", "0.0.0.0")
-    port = int(server_cfg.get("port", 8000))
+    port = int(server_cfg.get("port", 8100))
     logger.info("Основной сервер: http://%s:%s", host, port)
 
     # Warm-up системного мониторинга: запускает фоновый поток GPU,

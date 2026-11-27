@@ -1,0 +1,15 @@
+# VHS-Streamer — Python 3.6 / JetPack 4.6 (Ubuntu 18.04)
+#
+# Flask 3 и Werkzeug 3 требуют Python 3.8+, поэтому для TX2 NX
+# используется совместимая ветка Flask 2.x.
+# OpenCV ставится системным пакетом python3-opencv.
+
+Flask==2.0.3
+Werkzeug==2.0.3
+Jinja2==3.0.3
+itsdangerous==2.0.1
+click==8.0.4
+MarkupSafe==2.0.1
+# PyYAML и psutil ставятся системными пакетами:
+#   python3-yaml, python3-psutil (см. install_jetson.sh)
+requests==2.27.1

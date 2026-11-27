@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # VHS-Streamer — запуск сервера (Linux)
 set -e
 cd "$(dirname "$0")"
@@ -24,6 +24,6 @@ NEW_PID=$!
 echo "$NEW_PID" > run.pid
 
 echo "[OK] Сервер запущен. PID=$NEW_PID"
-echo "     Web UI:  http://localhost:8000"
+echo "     Web UI:  http://localhost:8100"
 echo "     Логи:    logs/vhs-streamer.log"
 echo "     Стоп:    ./stop.sh"

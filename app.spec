@@ -98,7 +98,8 @@ hiddenimports = [
     "device_discovery",   # задача №1 — обнаружение локальных устройств
     "motion_detector",    # motion detection по OpenCV
     "sadp_discovery",     # SADP (Hikvision) discovery
-    "system_monitor",     # системный мониторинг (CPU/RAM/диски/GPU)
+    "network_discovery",  # SSDP/UPnP, Dahua, ISAPI
+    "system_monitor",     # системный мониторинг (CPU/RAM/диски/GPU/сеть)
 ]
 hiddenimports += numpy_hiddenimports
 hiddenimports += opencv_hiddenimports

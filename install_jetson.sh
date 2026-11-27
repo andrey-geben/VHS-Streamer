@@ -1,31 +1,38 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # =====================================================================
 #  VHS-Streamer — установка на NVIDIA Jetson (Axiomtek AIE100 и подобные)
 # ---------------------------------------------------------------------
 #  Что делает:
-#    1. проверяет архитектуру (aarch64) и версию Python;
-#    2. ставит системные пакеты (ffmpeg, OpenCV для Python, venv);
-#    3. создаёт .venv и ставит зависимости;
-#    4. готовит bin/ (MediaMTX arm64 + ffmpeg), если их нет;
-#    5. создаёт config.yaml из примера;
-#    6. по желанию ставит systemd-службу (автозапуск);
-#    7. открывает порты в ufw.
+#    1. проверяет архитектуру и версию Python;
+#    2. для JetPack 4.6 / Python 3.6 собирает отдельную runtime-копию
+#       и понижает синтаксис через downgrade_for_py36.py;
+#    3. ставит системные пакеты (ffmpeg, OpenCV для Python, venv);
+#    4. создаёт .venv и ставит совместимые зависимости;
+#    5. готовит bin/ (MediaMTX arm64 + ffmpeg);
+#    6. создаёт config.yaml из примера;
+#    7. по желанию ставит systemd-службу.
 #
 #  Запуск:
 #      chmod +x install_jetson.sh
-#      ./install_jetson.sh              # без автозапуска
-#      ./install_jetson.sh --service    # + systemd (автозапуск)
+#      ./install_jetson.sh                  # без автозапуска
+#      ./install_jetson.sh --service        # + systemd
+#      ./install_jetson.sh --open-ports     # открыть порты в ufw
+#      ./install_jetson.sh --service --open-ports
 # =====================================================================
 set -euo pipefail
 
-cd "$(dirname "$0")"
-
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 WITH_SERVICE=0
+OPEN_PORTS=0
+FORCE_LEGACY=0
+
 for arg in "$@"; do
     case "$arg" in
         --service) WITH_SERVICE=1 ;;
+        --open-ports) OPEN_PORTS=1 ;;
+        --legacy) FORCE_LEGACY=1 ;;
         -h|--help)
-            sed -n '2,20p' "$0"; exit 0 ;;
+            sed -n '2,26p' "$0"; exit 0 ;;
     esac
 done
 
@@ -53,15 +60,26 @@ fi
 
 PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 echo "    Python $PYVER"
-if [ "$(printf '%s\n' "3.10" "$PYVER" | sort -V | head -n1)" != "3.10" ]; then
-    echo "[!] Нужен Python 3.10 или новее (сейчас $PYVER)."
-    echo "    На JetPack 5 (Ubuntu 20.04) стоит 3.8 — обновитесь до JetPack 6"
-    echo "    (Ubuntu 22.04, Python 3.10) или используйте Docker-вариант."
+
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 6) else 1)'; then
+    echo "[!] Нужен Python 3.6 или новее (сейчас $PYVER)."
     exit 1
 fi
 
 if [ -f /etc/nv_tegra_release ]; then
     echo "    JetPack: $(head -n1 /etc/nv_tegra_release)"
+fi
+
+LEGACY=0
+if [ "$FORCE_LEGACY" = "1" ]; then
+    LEGACY=1
+    echo "    Принудительный режим Python 3.6 (--legacy)."
+fi
+if [ "$LEGACY" = "0" ] && ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    LEGACY=1
+    echo
+    echo "    Python < 3.10: включаю режим JetPack 4.x / Python 3.6."
+    echo "    Будет создана отдельная копия: runtime/py36"
 fi
 
 # ---------------------------------------------------------------
@@ -73,40 +91,95 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq \
     python3-venv python3-pip python3-dev \
     ffmpeg \
-    python3-opencv \
-    libgl1 libglib2.0-0 libgomp1 \
+    python3-opencv python3-yaml python3-psutil \
+    libgl1-mesa-glx libglib2.0-0 libgomp1 \
     ufw curl tar xz-utils
 echo "    Готово."
 
 # ---------------------------------------------------------------
-# 3. Виртуальное окружение
+# 3. Runtime-копия для Python 3.6
+# ---------------------------------------------------------------
+APP_DIR="$ROOT"
+REQ_FILE="requirements-linux.txt"
+if [ "$LEGACY" = "1" ]; then
+    APP_DIR="$ROOT/runtime/py36"
+    if [ -d "$APP_DIR" ]; then
+        echo
+        echo "[3/7] Runtime Python 3.6 уже существует:"
+        echo "    $APP_DIR"
+        echo "    Для обновления кода удалите runtime/py36 и запустите установщик снова."
+    else
+        echo
+        echo "[3/7] Создаю runtime-копию для Python 3.6..."
+        mkdir -p "$APP_DIR"
+        tar -C "$ROOT" \
+            --exclude='./.git' \
+            --exclude='./.venv' \
+            --exclude='./runtime' \
+            --exclude='./archive' \
+            --exclude='./logs' \
+            --exclude='./__pycache__' \
+            --exclude='./.pytest_cache' \
+            --exclude='./dist' \
+            --exclude='./dist_*' \
+            --exclude='./build' \
+            --exclude='./build_vhs' \
+            --exclude='./events.db' \
+            --exclude='./config.yaml' \
+            --exclude='./*.bak-*' \
+            -cf - . | tar -C "$APP_DIR" -xf -
+        echo "    Копия создана."
+    fi
+
+    echo "    Понижаю синтаксис до Python 3.6..."
+    python3 "$APP_DIR/downgrade_for_py36.py" "$APP_DIR"
+
+    echo "    Проверяю синтаксис Python 3.6..."
+    find "$APP_DIR" -maxdepth 2 -name '*.py' -not -path '*/.venv/*' -print0 \
+        | xargs -0 -n1 python3 -m py_compile
+    echo "    Синтаксис OK."
+
+    REQ_FILE="requirements-py36.txt"
+else
+    echo
+    echo "[3/7] Python 3.10+: использую основной каталог проекта."
+fi
+
+cd "$APP_DIR"
+
+# ---------------------------------------------------------------
+# 4. Виртуальное окружение и зависимости
 # ---------------------------------------------------------------
 echo
-echo "[3/7] Виртуальное окружение .venv..."
-if [ -x ".venv/bin/python" ]; then
-    echo "    Уже существует — пропускаю."
-else
+echo "[4/7] Виртуальное окружение и зависимости..."
+if [ ! -x ".venv/bin/python" ]; then
     # --system-site-packages нужен, чтобы был доступен python3-opencv (cv2)
     python3 -m venv --system-site-packages .venv
-    echo "    Создано."
+    echo "    .venv создано."
+else
+    echo "    .venv уже существует — использую его."
 fi
 VENV_PY=".venv/bin/python"
 
-# ---------------------------------------------------------------
-# 4. Зависимости Python
-# ---------------------------------------------------------------
-echo
-echo "[4/7] Зависимости Python..."
-"$VENV_PY" -m pip install --upgrade pip -q
-# На ARM opencv берём из apt (python3-opencv), поэтому без opencv-python
-"$VENV_PY" -m pip install -q -r requirements-linux.txt
+if [ "$LEGACY" = "1" ]; then
+    "$VENV_PY" -m pip install -q --upgrade "pip<22" "setuptools<60" "wheel<0.38"
+else
+    "$VENV_PY" -m pip install -q --upgrade pip
+fi
+PIP_EXTRA=()
+if [ -d "$ROOT/wheels/py36" ]; then
+    PIP_EXTRA+=(--find-links "$ROOT/wheels/py36")
+    echo "    Использую локальный wheelhouse: wheels/py36"
+fi
+"$VENV_PY" -m pip install -q "${PIP_EXTRA[@]}" -r "$REQ_FILE"
+
 "$VENV_PY" - <<'PY'
-try:
-    import cv2
-    print("    OpenCV:", cv2.__version__)
-except Exception as exc:
-    print("    [!] OpenCV не найден:", exc)
-    raise SystemExit(1)
+import cv2
+import flask
+import yaml
+print("    OpenCV:", cv2.__version__)
+print("    Flask:", flask.__version__)
+print("    PyYAML:", yaml.__version__)
 PY
 
 # ---------------------------------------------------------------
@@ -115,17 +188,18 @@ PY
 echo
 echo "[5/7] Компоненты bin/ (MediaMTX + FFmpeg)..."
 mkdir -p bin
-if [ -x "bin/mediamtx" ]; then
-    echo "    mediamtx уже есть."
-else
+chmod +x bin/mediamtx bin/ffmpeg bin/ffprobe 2>/dev/null || true
+if [ ! -x "bin/mediamtx" ]; then
     echo "    Скачиваю MediaMTX для arm64 с GitHub..."
     "$VENV_PY" - <<'PY'
 from bootstrap import ensure_all
 result = ensure_all()
 print("    bootstrap:", result)
 PY
+else
+    echo "    mediamtx уже есть."
 fi
-# ffmpeg из apt — кладём ссылку в bin/, чтобы приложение нашло его рядом
+
 if [ ! -x "bin/ffmpeg" ]; then
     ln -sf "$(command -v ffmpeg)" bin/ffmpeg
     echo "    bin/ffmpeg -> $(command -v ffmpeg)"
@@ -142,8 +216,13 @@ echo "[6/7] Конфигурация..."
 if [ -f "config.yaml" ]; then
     echo "    config.yaml уже существует — не трогаю."
 else
-    cp config.example.yaml config.yaml
-    echo "    Создан config.yaml из примера."
+    if [ -f "$ROOT/config.yaml" ]; then
+        cp "$ROOT/config.yaml" config.yaml
+        echo "    Скопирован config.yaml из корня проекта."
+    else
+        cp config.example.yaml config.yaml
+        echo "    Создан config.yaml из примера."
+    fi
     echo "    При первом запуске приложение сгенерирует пароль администратора"
     echo "    и покажет его в консоли."
 fi
@@ -154,7 +233,6 @@ fi
 echo
 echo "[7/7] Служба и порты..."
 if [ "$WITH_SERVICE" = "1" ]; then
-    APP_DIR="$(pwd)"
     UNIT=/etc/systemd/system/vhs-streamer.service
     sudo tee "$UNIT" >/dev/null <<UNIT_EOF
 [Unit]
@@ -166,6 +244,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$APP_DIR
 ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/app.py
+Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=5
 User=$USER
@@ -180,21 +259,27 @@ else
     echo "    Автозапуск не включён (запустите с --service, если нужно)."
 fi
 
-sudo ufw allow 8000/tcp  >/dev/null 2>&1 || true
-sudo ufw allow 8081/tcp  >/dev/null 2>&1 || true
-sudo ufw allow 8554/tcp  >/dev/null 2>&1 || true
-sudo ufw allow 8889/tcp  >/dev/null 2>&1 || true
-sudo ufw allow 8189/udp  >/dev/null 2>&1 || true
-sudo ufw allow 8080/tcp  >/dev/null 2>&1 || true
-echo "    Порты 8000/8081/8554/8889/8189udp/8080 разрешены (если ufw активен)."
+if [ "$OPEN_PORTS" = "1" ]; then
+    sudo ufw allow 8100/tcp  >/dev/null 2>&1 || true
+    sudo ufw allow 8081/tcp  >/dev/null 2>&1 || true
+    sudo ufw allow 8554/tcp  >/dev/null 2>&1 || true
+    sudo ufw allow 8889/tcp  >/dev/null 2>&1 || true
+    sudo ufw allow 8189/udp  >/dev/null 2>&1 || true
+    sudo ufw allow 8080/tcp  >/dev/null 2>&1 || true
+    echo "    Порты открыты в ufw (только если ufw активен)."
+else
+    echo "    Порты не открывались. Для локальной сети: --open-ports."
+fi
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo
 echo "============================================"
 echo "  Установка завершена"
 echo "============================================"
-echo "  Панель:   http://${IP:-<ip-машины>}:8000"
-echo "  Запуск:   ./start.sh          (или systemctl start vhs-streamer)"
-echo "  Логи:     logs/vhs-streamer.log"
+echo "  Каталог:  $APP_DIR"
+echo "  Панель:   http://${IP:-<ip-машины>}:8100"
+echo "  Запуск:   cd $APP_DIR && ./start.sh"
+echo "  Логи:     $APP_DIR/logs/vhs-streamer.log"
 echo "  Логин:    смотрите вывод первого запуска (генерируется автоматически)"
 echo
+

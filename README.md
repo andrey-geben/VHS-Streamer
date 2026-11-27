@@ -47,6 +47,9 @@ motion detection на OpenCV, обнаружением локальных уст
   «Найти камеры (ONVIF + SADP)» сканирует оба протокола одновременно,
   объединяет результаты по IP и показывает MAC, серийный номер, модель
   и порты. Работает для Hikvision с выключенным ONVIF.
+- **Дополнительные методы поиска** — SSDP/UPnP, Dahua/Amcrest broadcast
+  и ISAPI-проба Hikvision. Включаются галочками рядом с кнопкой поиска;
+  результаты объединяются по IP.
 
 ### Раздача RTSP
 - **До 3 потоков** с одной камеры (лимит настраивается).
@@ -109,7 +112,11 @@ motion detection на OpenCV, обнаружением локальных уст
   проблемы с носителем / потеря сети.
 - Автоочистка по размеру и по возрасту.
 - **Без перекодирования видео** — `-c:v copy`, качество как с камеры.
-- Индивидуальный путь архива на камеру (локально, NAS, внешний диск).
+- Индивидуальный путь архива на камеру (внешний диск, NAS).
+- Запись разрешена только на **внешний носитель**. Путь внутри каталога
+  программы или на системном диске отклоняется.
+- Если внешний носитель не подключён, запись не активна; в настройках
+  показывается причина и свободное место после подключения.
 - Структура `archive/<camera_id>/<YYYY-MM-DD>/<HH-MM-SS>.mp4`.
 
 ### Навигация по архиву
@@ -214,7 +221,7 @@ MediaMTX размножает его на любое число клиентов
 читаются для MJPEG-превью и рекордера. Дополнительный поток с камеры
 не создаётся — только ~5–15% CPU на камеру.
 
-### Компоненты Flask-сервера (порт 8000)
+### Компоненты Flask-сервера (порт 8100)
 
 ```
 Camera                — захват кадров с камеры (OpenCV)
@@ -228,6 +235,7 @@ streams_api           — API потоков + синхронизация auth �
 settings_api          — API настроек, камер, событий
 device_discovery      — USB-камеры (DirectShow / V4L2)
 sadp_discovery        — Hikvision SADP (UDP multicast)
+network_discovery     — SSDP/UPnP, Dahua broadcast, ISAPI-проба
 audio_probe           — проверка звука через FFprobe
 transcode             — определение рабочих H264-кодеков
 diagnostics           — ZIP-отчёт для поддержки
@@ -296,7 +304,7 @@ cd VHS-Streamer
 .\start.bat
 ```
 
-Откройте `http://localhost:8000` и войдите под учёткой из `config.yaml`.
+Откройте `http://localhost:8100` и войдите под учёткой из `config.yaml`.
 
 ### Linux
 
@@ -364,7 +372,7 @@ chmod +x install.sh start.sh stop.sh
 
 ## Ярлык Chrome (app / kiosk mode, Windows)
 
-Если открывать VHS-Streamer в обычной вкладке — мешает адресная строка и панель вкладок. Для повседневного использования по LAN (`http://192.168.1.104:8000`) есть **три варианта ярлыка Chrome** — от «окно без обвязки браузера» до «полноэкранная панель видеонаблюдения».
+Если открывать VHS-Streamer в обычной вкладке — мешает адресная строка и панель вкладок. Для повседневного использования по LAN (`http://192.168.1.104:8100`) есть **три варианта ярлыка Chrome** — от «окно без обвязки браузера» до «полноэкранная панель видеонаблюдения».
 
 ### Какой выбрать
 
@@ -407,7 +415,7 @@ Edge (Chromium) тоже поддерживает `--app=` и `--kiosk=` — з�
 ```bat
 @echo off
 start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
-    --app=http://192.168.1.104:8000/ ^
+    --app=http://192.168.1.104:8100/ ^
     --window-size=1400,900 ^
     --window-position=100,100
 ```
@@ -422,7 +430,7 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
 
 ```bat
 @echo off
-start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://192.168.1.104:8000/ --window-size=1400,900 --window-position=100,100
+start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://192.168.1.104:8100/ --window-size=1400,900 --window-position=100,100
 ```
 
 ### Вариант B — `--kiosk` (для монитора-панели)
@@ -434,7 +442,7 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://19
 start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
     --kiosk ^
     --window-position=0,0 ^
-    http://192.168.1.104:8000/
+    http://192.168.1.104:8100/
 ```
 
 > ⚠️ **Предупреждение.** В kiosk-режиме если браузер покажет ошибку (например, «сайт недоступен»), выйти из неё кликом нельзя — только `Alt+F4`. Не ставьте это на машину, к которой есть физический доступ у случайных людей.
@@ -446,7 +454,7 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
 ```bat
 @echo off
 start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
-    --app=http://192.168.1.104:8000/ ^
+    --app=http://192.168.1.104:8100/ ^
     --start-maximized
 ```
 
@@ -471,9 +479,9 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
 
 ### Замена IP-адреса
 
-Во всех примерах используется `http://192.168.1.104:8000/` — это адрес машины, где запущен VHS-Streamer. Если сервер на другом хосте/порту — замените URL в `.bat` на свой:
+Во всех примерах используется `http://192.168.1.104:8100/` — это адрес машины, где запущен VHS-Streamer. Если сервер на другом хосте/порту — замените URL в `.bat` на свой:
 
-- `http://localhost:8000/` — если запускаете браузер на той же машине, что и сервер;
+- `http://localhost:8100/` — если запускаете браузер на той же машине, что и сервер;
 - `http://<IP>:<PORT>/` — если по LAN (узнать IP: `ipconfig` в cmd, раздел «IPv4-адрес»).
 
 ---

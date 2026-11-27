@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Справка — VHS-Streamer{% endblock %}
+{% block content %}
+<style>
+    .help-wrap{display:grid;grid-template-columns:235px minmax(0,1fr);gap:26px;max-width:1220px;margin:0 auto}
+    .help-nav{position:sticky;top:74px;align-self:start;background:#14161a;border:1px solid #2a2f37;border-radius:8px;padding:14px}
+    .help-nav b{display:block;color:#8b96a5;font-size:.72em;letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px}
+    .help-nav a{display:block;color:#b9c6d4;text-decoration:none;font-size:.88em;padding:6px 7px;border-radius:4px}
+    .help-nav a:hover{background:#1d2633;color:#e8e8e8}
+    .help-doc{min-width:0}
+    .help-doc h1{margin-top:0}
+    .help-doc h2{margin:28px 0 10px;padding-top:8px;border-top:1px solid #2a2f37;font-size:1.25em}
+    .help-doc h2:first-of-type{border-top:0;margin-top:10px}
+    .help-doc h3{margin:18px 0 7px;font-size:1.02em}
+    .help-doc p,.help-doc li{line-height:1.65;color:#c9d3dd;font-size:.94em}
+    .help-doc ul,.help-doc ol{padding-left:22px}
+    .help-doc code{background:#0f1720;border:1px solid #263342;border-radius:3px;padding:1px 5px;color:#8fd7e2}
+    .help-doc pre{background:#0f1720;border:1px solid #263342;border-radius:6px;padding:11px 13px;overflow:auto;color:#d8e8ee;font-size:.84em;line-height:1.55}
+    .help-note{background:#141d27;border-left:3px solid #49c6d4;padding:10px 13px;border-radius:4px;margin:12px 0}
+    .help-warn{background:#211b17;border-left:3px solid #d3a85a;padding:10px 13px;border-radius:4px;margin:12px 0}
+    .help-status{display:flex;gap:18px;flex-wrap:wrap;background:#14161a;border:1px solid #2a2f37;border-radius:8px;padding:12px 14px;margin:14px 0 18px;font-size:.88em}
+    .help-status b{color:#e8e8e8}
+    .help-table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:.88em}
+    .help-table th,.help-table td{border-bottom:1px solid #2a2f37;padding:8px 9px;text-align:left;vertical-align:top}
+    .help-table th{color:#8b96a5;font-weight:normal}
+    .help-tag{display:inline-block;background:#1d2633;border:1px solid #33465a;border-radius:10px;padding:1px 8px;font-size:.78em;color:#8fd7e2}
+    @media(max-width:850px){.help-wrap{grid-template-columns:1fr}.help-nav{position:static}.help-nav a{display:inline-block;margin:2px}}
+</style>
+
+<div class="help-wrap">
+    <aside class="help-nav">
+        <b>Навигация</b>
+        <a href="#start">Быстрый старт</a>
+        <a href="#cameras">Камеры и потоки</a>
+        <a href="#archive">Архив</a>
+        <a href="#events">События и motion</a>
+        <a href="#security">Пользователи и доступ</a>
+        <a href="#integration">Интеграция и API</a>
+        <a href="#diagnostics">Диагностика</a>
+        {% if is_arm %}
+        <b style="margin-top:14px">ARM / Jetson</b>
+        <a href="#arm-install">Установка</a>
+        <a href="#arm-storage">Диски и нагрузка</a>
+        <a href="#arm-migrate">Миграция по SSH</a>
+        <a href="#arm-limits">Ограничения</a>
+        {% endif %}
+        <b style="margin-top:14px">Ещё</b>
+        <a href="{{ url_for('about_page') }}">О программе</a>
+    </aside>
+
+    <main class="help-doc">
+        <h1>Справка VHS-Streamer</h1>
+        <p class="muted">
+            Практическое руководство по эксплуатации. Версия {{ app_version }},
+            веб-порт <b>{{ port }}</b>.
+        </p>
+        <div class="help-status">
+            <span>Платформа: <b>{% if is_arm %}ARM / Jetson{% else %}обычная (x86/Windows/Linux){% endif %}</b></span>
+            <span>Архив:
+                <b>{% if archive_storage.available %}подключён · {{ archive_storage.free_gb }} ГБ свободно{% else %}не активен{% endif %}</b>
+            </span>
+            <span>Внешний путь: <b>{{ archive_storage.path or 'не задан' }}</b></span>
+        </div>
+
+        <h2 id="start">Быстрый старт</h2>
+        <ol>
+            <li>Запустите Streamer: <code>start.bat</code> / <code>./start.sh</code> или службу <code>vhs-streamer</code>.</li>
+            <li>Откройте <code>http://&lt;ip&gt;:{{ port }}</code> и войдите под учётной записью из <code>config.yaml</code>.</li>
+            <li>При первом запуске пароль администратора генерируется автоматически и печатается в лог/консоль.</li>
+            <li>Откройте <b>Настройки → Камеры</b>, добавьте IP-камеру по RTSP или найдите её через ONVIF/SADP.</li>
+            <li>Проверьте поток на главной и при необходимости настройте архив, события и пользователей.</li>
+        </ol>
+        <table class="help-table">
+            <tr><th>Сервис</th><th>Порт</th><th>Назначение</th></tr>
+            <tr><td>Веб-панель</td><td>{{ port }}</td><td>камеры, архив, настройки</td></tr>
+            <tr><td>ONVIF-прокси</td><td>8081</td><td>подключение ONVIF-клиентов/NVR</td></tr>
+            <tr><td>MediaMTX RTSP</td><td>8554</td><td>RTSP-потоки</td></tr>
+            <tr><td>MediaMTX WebRTC</td><td>8889 + 8189/udp</td><td>превью в браузере</td></tr>
+            <tr><td>MediaMTX API</td><td>9997 (локально)</td><td>управление путями</td></tr>
+        </table>
+        <div class="help-note">
+            Внешние порты открывайте только при необходимости. Для объекта за NAT
+            используйте WireGuard и не публикуйте панель/RTSP в интернет.
+        </div>
+
+        <h2 id="cameras">Камеры и потоки</h2>
+        <p>
+            Streamer принимает IP-камеры по RTSP/HTTP, USB/аналоговые устройства и
+            ONVIF-камеры. Камера отдаёт поток один раз в MediaMTX, а MediaMTX
+            размножает его на браузер, NVR и архив.
+        </p>
+        <p>
+            Для поиска в локальной сети доступны ONVIF WS-Discovery, SADP
+            (Hikvision), SSDP/UPnP, Dahua/Amcrest broadcast и ISAPI-проба
+            Hikvision. Дополнительные методы включаются галочками в
+            <b>Настройки → ONVIF</b>.
+        </p>
+        <h3>Добавление IP-камеры</h3>
+        <ol>
+            <li><b>Настройки → Камеры → Добавить</b>.</li>
+            <li>Укажите имя и RTSP-URL вида <code>rtsp://user:pass@ip:554/stream</code>.</li>
+            <li>Проверьте кодек, разрешение и звук; сохраните.</li>
+            <li>Для ONVIF используйте поиск камер, для аналоговых — карту захвата/USB.</li>
+        </ol>
+        <div class="help-warn">
+            Не ставьте одинаковый <code>id</code> разным камерам и не добавляйте одну
+            камеру дважды под разными именами — это создаст дубли потоков и событий.
+        </div>
+
+        <h2 id="archive">Архив</h2>
+        <p>
+            Архив — циклическая запись сегментами MP4. <b>Запись разрешена только
+            на подключённый внешний носитель</b>: отдельный диск, NAS или смонтированный
+            раздел. Системный диск и каталог программы не используются.
+        </p>
+        <ul>
+            <li>Путь задаётся в <b>Настройки → Архив</b>, например <code>/mnt/vhs-archive</code>.</li>
+            <li>Если путь не задан, не существует или указывает на системный диск — архив не активен.</li>
+            <li>Для каждой камеры выберите режим: <b>постоянная</b> или <b>по событиям</b>.</li>
+            <li>После смены общего пути перезапустите Streamer.</li>
+            <li>Следите за свободным местом: циклическая запись удаляет старые сегменты по лимиту размера/срока.</li>
+        </ul>
+        <div class="help-note">
+            Текущий статус: <b>{% if archive_storage.available %}внешнее хранилище подключено{% else %}{{ archive_storage.reason }}{% endif %}</b>.
+        </div>
+
+        <h2 id="events">События и motion</h2>
+        <p>
+            Motion detection работает на OpenCV и не создаёт дополнительный поток с
+            камеры. Включается глобально и может переопределяться для каждой камеры.
+        </p>
+        <ul>
+            <li>Настройте чувствительность (минимальную площадь) в настройках камеры.</li>
+            <li>События видны в разделе <b>События</b> и на главной; для тревожных событий есть снимок.</li>
+            <li>Режим записи «по событиям» пишет заданное число секунд вокруг срабатывания.</li>
+            <li>ONVIF-события приходят от камеры и не требуют OpenCV.</li>
+        </ul>
+
+        <h2 id="security">Пользователи и доступ</h2>
+        <ul>
+            <li><b>admin</b> — полный доступ, настройки, пользователи, архив, API-токен.</li>
+            <li><b>viewer</b> — только разрешённые камеры; без изменения настроек.</li>
+            <li>Пароли и API-токен хранятся в <code>config.yaml</code>; не публикуйте файл.</li>
+            <li>Для интеграции используйте отдельный токен и заголовок <code>X-API-Token</code>.</li>
+            <li>SSO-cookie <code>vhs_sso</code> используется для перехода между сервисами VHS.</li>
+        </ul>
+        <div class="help-warn">
+            Смените пароль администратора и <code>security.api_token</code> сразу после
+            установки. Не оставляйте значения из <code>config.example.yaml</code>.
+        </div>
+
+        <h2 id="integration">Интеграция и API</h2>
+        <p>
+            VHS-Viewer получает список потоков из Streamer, а VHS-Security — состояние
+            из Viewer. Streamer не требует Security для работы.
+        </p>
+        <table class="help-table">
+            <tr><th>Метод</th><th>Назначение</th></tr>
+            <tr><td><code>GET /api/integration/streams</code></td><td>список камер и WebRTC-URL для Viewer</td></tr>
+            <tr><td><code>GET /api/streams</code></td><td>потоки и RTSP/WebRTC-ссылки</td></tr>
+            <tr><td><code>GET /api/status</code></td><td>состояние сервера</td></tr>
+            <tr><td><code>GET /health</code></td><td>health-check без авторизации</td></tr>
+        </table>
+        <p>
+            Пример:
+        </p>
+        <pre>curl -H "X-API-Token: &lt;security.api_token&gt;" \
+  http://127.0.0.1:{{ port }}/api/integration/streams</pre>
+
+        <h2 id="diagnostics">Диагностика</h2>
+        <table class="help-table">
+            <tr><th>Симптом</th><th>Что проверить</th></tr>
+            <tr><td>Камера не подключается</td><td>RTSP-URL, логин/пароль, доступность порта 554 с сервера, <code>ffprobe</code></td></tr>
+            <tr><td>Нет превью в браузере</td><td>порты 8889/tcp и 8189/udp, WebRTC, firewall</td></tr>
+            <tr><td>Архив не пишется</td><td>внешний диск подключён, путь доступен на запись, режим камеры не «off»</td></tr>
+            <tr><td>Панель не открывается</td><td>служба запущена, порт {{ port }}, <code>/health</code></td></tr>
+            <tr><td>Высокая нагрузка CPU</td><td>транскодирование, motion detection, число камер; для Jetson — ограничьте анализ</td></tr>
+        </table>
+        <p>
+            Полный отчёт: <b>Система → Диагностика</b> (ZIP с логами и конфигурацией
+            без секретов).
+        </p>
+
+        {% if is_arm %}
+        <h2 id="arm-install">ARM / Jetson: установка</h2>
+        <p>
+            Для AIE100-T2NX (Jetson TX2 NX) используется JetPack 4.6 / Ubuntu 18.04 /
+            Python 3.6. Установщик сам создаёт <code>runtime/py36</code>, понижает
+            синтаксис и ставит совместимые зависимости.
+        </p>
+        <pre>cd VHS-Streamer-ARM-USB
+chmod +x install_jetson.sh start.sh stop.sh
+./install_jetson.sh --service
+# для доступа из локальной сети:
+./install_jetson.sh --service --open-ports</pre>
+        <p>
+            После установки проверьте:
+        </p>
+        <pre>systemctl status vhs-streamer
+curl http://127.0.0.1:{{ port }}/health
+journalctl -u vhs-streamer -n 100 --no-pager</pre>
+
+        <h2 id="arm-storage">ARM: диски и нагрузка</h2>
+        <ul>
+            <li>16 ГБ eMMC недостаточно для видео — используйте NVMe M.2 2280.</li>
+            <li>Архив — только на внешнем носителе; локальный буфер минимальный.</li>
+            <li>TX2 NX: 4 ГБ RAM, 4–8 камер 1080p без транскодирования.</li>
+            <li>YOLO/ALPR на TX2 NX не запускайте — аналитика остаётся на Viewer.</li>
+            <li>NVENC требует Jetson-патчей FFmpeg; иначе кодирование идёт через libx264.</li>
+        </ul>
+
+        <h2 id="arm-migrate">ARM: миграция по SSH</h2>
+        <p>
+            Скрипт <code>migrate_to_arm.sh</code> переносит Streamer на другой ARM:
+            копирует комплект, устанавливает службу и переносит данные.
+        </p>
+        <ol>
+            <li>Подготовьте SSH-ключ и вход без пароля.</li>
+            <li>Разрешите <code>sudo</code> без пароля для установки пакетов и systemd.</li>
+            <li>Запустите миграцию с флешки или со старого сервера.</li>
+        </ol>
+        <pre>./migrate_to_arm.sh user@new-arm \
+    --data-from /opt/vhs-streamer \
+    --stop-source</pre>
+        <p>
+            <code>--data-from</code> указывает каталог старой установки. Скрипт
+            переносит <code>config.yaml</code>, <code>archive/</code> и <code>events.db</code>.
+            Перед копированием архива остановите старый экземпляр — иначе можно
+            скопировать незавершённый сегмент.
+        </p>
+        <div class="help-warn">
+            Не запускайте миграцию одновременно с записью в архив. После переноса
+            проверьте <code>/health</code>, камеры и свободное место.
+        </div>
+
+        <h2 id="arm-limits">ARM: ограничения</h2>
+        <ul>
+            <li>JetPack 4.x не обновляется до Ubuntu 22.04/24.04 официально.</li>
+            <li>Python 3.6 EOL: не выставляйте Streamer напрямую в интернет.</li>
+            <li>4 ГБ RAM ограничивают число камер и motion detection.</li>
+            <li>Для 10+ камер или AI используйте Orin/x86-сервер.</li>
+            <li>Проверьте температуру и питание: Jetson нельзя отключать «из розетки».</li>
+        </ul>
+        {% endif %}
+
+        <p class="muted" style="margin-top:26px">
+            Не нашли ответ? Смотрите <a href="{{ url_for('about_page') }}">«О программе»</a>
+            и файлы <code>README.md</code>, <code>INSTALL_JETSON.md</code>,
+            <code>README-USB.md</code>.
+        </p>
+    </main>
+</div>
+{% endblock %}

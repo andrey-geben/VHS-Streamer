@@ -1,4 +1,4 @@
-# VHS-Streamer — установка на NVIDIA Jetson (Axiomtek AIE100-N2NX и аналоги)
+﻿# VHS-Streamer — установка на NVIDIA Jetson (Axiomtek AIE100-N2NX и аналоги)
 
 ## Что это за железо
 
@@ -15,12 +15,15 @@ Axiomtek AIE100 — семейство безвентиляторных Edge AI 
 ```bash
 uname -m                 # должно быть aarch64
 cat /etc/nv_tegra_release   # версия L4T/JetPack
-python3 --version        # нужен 3.10+
+python3 --version        # на TX2 NX — 3.6; на Orin/Ubuntu 22.04 — 3.10+
 ```
 
-Если `python3 --version` показывает 3.8 — это JetPack 5 (Ubuntu 20.04).
-Приложение требует Python 3.10+, поэтому нужен **JetPack 6** (Ubuntu 22.04)
-или Docker-вариант.
+Для **AIE100-T2NX (TX2 NX)** максимум — **JetPack 4.6 / Ubuntu 18.04 /
+Python 3.6**. Установщик автоматически создаёт отдельную копию `runtime/py36`,
+понижает синтаксис и ставит совместимые зависимости (Flask 2.x).
+
+Для Orin (JetPack 5/6) и Ubuntu 20.04/22.04:
+Python 3.8–3.9 идёт через legacy/runtime, Python 3.10+ — обычный режим.
 
 ## Установка (5 минут)
 
@@ -37,14 +40,17 @@ chmod +x install_jetson.sh
 
 Скрипт по шагам:
 
-1. проверяет `aarch64` и Python ≥ 3.10;
-2. ставит системные пакеты: `ffmpeg`, `python3-opencv`, `python3-venv`,
-   библиотеки для OpenCV (`libgl1`, `libglib2.0-0`, `libgomp1`);
-3. создаёт `.venv` с `--system-site-packages` (чтобы был доступен системный OpenCV);
-4. ставит Python-зависимости из `requirements-linux.txt`;
-5. готовит `bin\`: скачивает **MediaMTX для arm64** и ссылается на системный `ffmpeg`;
-6. создаёт `config.yaml` из примера;
-7. при `--service` ставит systemd-службу `vhs-streamer` и открывает порты в `ufw`.
+1. проверяет `aarch64` и Python ≥ 3.6;
+2. для Python < 3.10 создаёт `runtime/py36`, понижает синтаксис и проверяет его;
+3. ставит системные пакеты: `ffmpeg`, `python3-opencv`, `python3-venv`,
+   библиотеки для OpenCV (`libgl1-mesa-glx`, `libglib2.0-0`, `libgomp1`);
+4. создаёт `.venv` с `--system-site-packages` (чтобы был доступен системный OpenCV);
+5. ставит `requirements-py36.txt` для Python 3.6 или `requirements-linux.txt` для 3.10+;
+6. готовит `bin/`: скачивает **MediaMTX для arm64** и ссылается на системный `ffmpeg`;
+7. создаёт `config.yaml` из корня проекта или из примера;
+8. при `--service` ставит systemd-службу; порты открываются только с `--open-ports`.
+
+Для обновления legacy-версии удалите `runtime/py36` и запустите установщик снова.
 
 ## Запуск
 
@@ -54,7 +60,9 @@ sudo systemctl status vhs-streamer   # если ставили с --service
 ```
 
 Первый запуск создаст пароль администратора и напечатает его в консоли — запишите.
-Дальше панель открывается по адресу `http://<ip-jetson>:8000` из локальной сети.
+Дальше панель открывается по адресу `http://<ip-jetson>:8100`.
+Для доступа из локальной сети установите с `--open-ports`; для edge-схемы
+порты открывать не нужно — доступ идёт через WireGuard.
 
 ## Offline-установка (без интернета)
 
@@ -97,8 +105,9 @@ ffmpeg -hide_banner -encoders 2>/dev/null | grep -Ei "nvenc|nvmpi|v4l2"
 - **`pyinstaller`** на Jetson не нужен — запускаем из исходников.
 - **архив и `events.db`** лежат в папке программы; при обновлении версии
   сохраняйте `config.yaml`, `archive/`, `events.db`.
-- **Порты**: 8000 (панель), 8081 (ONVIF), 8554 (RTSP), 8889 + 8189/udp (WebRTC),
-  8080 (дубли). Скрипт открывает их в `ufw`.
+- **Порты**: 8100 (панель), 8081 (ONVIF), 8554 (RTSP), 8889 + 8189/udp (WebRTC),
+  8080 (дубли). По умолчанию установщик их не открывает; для локальной сети
+  используйте `--open-ports`, для edge-схемы — только WireGuard.
 - Питание: не отключайте Jetson «из розетки» — используйте `sudo poweroff`,
   иначе можно повредить файловую систему SD/NVMe.
 
@@ -115,9 +124,9 @@ sudo systemctl start vhs-streamer
 | Симптом | Что проверить |
 |---|---|
 | `aarch64` не определяется | это не Jetson; для x86 используйте `install.sh` |
-| Python 3.8 | JetPack 5; нужен JetPack 6 или Docker |
+| Python 3.6/3.8 | это нормально: установщик соберёт `runtime/py36` |
 | `cv2` не импортируется | `sudo apt install python3-opencv`, venv создавать с `--system-site-packages` |
-| панель не открывается из сети | `sudo ufw status`, порт 8000 |
+| панель не открывается из сети | `sudo ufw status`, порт 8100 |
 | камеры не подключаются | `logs/vhs-streamer.log`, доступность RTSP камеры с Jetson (`ffprobe rtsp://...`) |
 | превью чёрные | WebRTC идёт на 8889/8189udp, проверьте их и `mediamtx.yml` |
 
@@ -163,25 +172,22 @@ NVIDIA Container Runtime и FFmpeg с Jetson-патчами). Кодирован
 ### JetPack 4.x (Ubuntu 18.04, Python 3.6.9)
 
 Если `python3 --version` показывает **3.6** — это Ubuntu 18.04 и JetPack 4.x.
-Нативный запуск невозможен: приложение использует синтаксис Python 3.10.
-Рабочий путь — Docker (образ внутри имеет Python 3.10, версия на хосте не важна).
+Нативный запуск **поддерживается**: установщик создаёт `runtime/py36`,
+понижает синтаксис и ставит Flask 2.x.
 
 ```bash
-# 1. Docker и compose (для 18.04 — это docker-compose v1)
-sudo apt update
+cd VHS-Streamer
+chmod +x install_jetson.sh start.sh
+./install_jetson.sh --service
+```
+
+Docker остаётся резервным вариантом, если нативное окружение не собирается:
+
+```bash
 sudo apt install -y docker.io docker-compose
-sudo usermod -aG docker $USER      # затем выйти и зайти заново
-
-# 2. Проверить
-docker --version
-docker-compose --version
-
-# 3. Распаковать исходники и запустить
-unzip VHS-Streamer-source-v1.1.1.zip -d VHS-Streamer
+sudo usermod -aG docker $USER
 cd VHS-Streamer/VHS-Streamer-Jetson
 chmod +x run.sh build.sh entrypoint.sh
-
-# образ под старое ядро 4.9 (Debian 11)
 ./run.sh --bullseye
 ```
 
@@ -189,19 +195,9 @@ chmod +x run.sh build.sh entrypoint.sh
 заводится на ядре 4.9 надёжнее, чем Ubuntu 22.04. OpenCV ставится колесом
 `opencv-python-headless` (aarch64).
 
-Если Docker на 18.04 требует прав (не перелогинились) — запускайте через `sudo`:
-`sudo docker-compose up -d`.
-
-Проверка состояния и пароль:
-
-```bash
-docker-compose ps
-docker-compose logs | grep -A3 "ПЕРВЫЙ ЗАПУСК"
-```
-
-Остановка: `docker-compose down`.
-
-Ограничение: NVENC внутри контейнера не задействован, кодирование — `libx264`.
+Ограничение обоих вариантов: NVENC не задействован без Jetson-патчей FFmpeg;
+кодирование — `libx264`. Для 4–8 камер это приемлемо.
 Для Jetson с JetPack 4 (Xavier NX / TX2 NX) это нормально для 4–8 камер;
 для большего числа камер имеет смысл обновить JetPack до 5/6 и собрать FFmpeg
 с `nvv4l2h264enc`.
+

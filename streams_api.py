@@ -14,6 +14,7 @@ import base64
 import hashlib
 import logging
 import secrets
+import time
 from pathlib import Path
 
 import requests
@@ -212,25 +213,34 @@ def _sync_mediamtx_auth(config: dict, mediamtx_config_path: Path) -> int:
     # все raw-пути и пользовательские потоки будут потеряны,
     # и Camera/FFmpeg получат 400/404. Снимаем снимок через API
     # и записываем в файл, чтобы сохранить их.
-    try:
-        r = requests.get(
-            "http://127.0.0.1:9997/v3/config/paths/list",
-            timeout=5,
-        )
-        if r.status_code == 200:
-            items = r.json().get("items", []) or []
-            if items:
-                mtx_cfg["paths"] = {
-                    item["name"]: item for item in items
-                    if isinstance(item, dict) and item.get("name")
-                }
-                logger.info(
-                    "mediamtx.yml: сохранено %d динамических путей",
-                    len(mtx_cfg["paths"]),
-                )
-    except Exception as e:
+    last_error = None
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                "http://127.0.0.1:9997/v3/config/paths/list",
+                timeout=5,
+            )
+            if r.status_code == 200:
+                items = r.json().get("items", []) or []
+                if items:
+                    mtx_cfg["paths"] = {
+                        item["name"]: item for item in items
+                        if isinstance(item, dict) and item.get("name")
+                    }
+                    logger.info(
+                        "mediamtx.yml: сохранено %d динамических путей",
+                        len(mtx_cfg["paths"]),
+                    )
+                last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(1.0)
+    if last_error:
         logger.warning(
-            "mediamtx.yml: не удалось сохранить динамические пути: %s", e,
+            "mediamtx.yml: не удалось сохранить динамические пути: %s",
+            last_error,
         )
 
     try:

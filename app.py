@@ -168,7 +168,8 @@ def load_config() -> dict:
 
 # ------------ подсказка -----------------
 # Первый запуск на новой машине: config.yaml может отсутствовать.
-# Создаём его из примера, генерируем пароль админа и печатаем в консоль.
+# Создаём его из примера, но пароль задаёт пользователь через /setup.
+config_existed = CONFIG_PATH.exists()
 first_run_info = None
 try:
     first_run_info = ensure_config(CONFIG_PATH, BASE_DIR / "config.example.yaml")
@@ -185,11 +186,35 @@ if handle_argv(sys.argv[1:], CONFIG_PATH):
     sys.exit(0)
 server_cfg = config.get("server", {})
 
-if first_run_info:
-    _port = server_cfg.get("port", 8100)
-    print_first_run_banner(first_run_info, f"http://127.0.0.1:{_port}")
 security_cfg = config.get("security", {})
 archive_cfg = config.get("archive", {})
+
+# ------------ мастер первого запуска -----------------
+SETUP_TOKEN = None
+SETUP_REQUIRED = False
+_setup_admin = next(
+    (u for u in security_cfg.get("users", []) if u.get("role") == "admin"),
+    None,
+)
+_setup_password = str((_setup_admin or {}).get("password") or "").strip()
+if not config_existed or not _setup_admin or _setup_password in ("", "CHANGE-ME"):
+    SETUP_REQUIRED = True
+    SETUP_TOKEN = secrets.token_urlsafe(9)
+    _port = int(server_cfg.get("port", 8100))
+    print(
+        "\n" + "=" * 66 +
+        "\n  ПЕРВЫЙ ЗАПУСК VHS-Streamer\n"
+        "  Откройте в браузере:\n"
+        f"  http://127.0.0.1:{_port}/setup?token={SETUP_TOKEN}\n\n"
+        "  Задайте логин, пароль администратора и API-токен.\n"
+        "  Код действует до завершения настройки.\n" +
+        "=" * 66 + "\n",
+        flush=True,
+    )
+    logger.warning("Первый запуск: требуется /setup (код в консоли)")
+elif first_run_info:
+    _port = server_cfg.get("port", 8100)
+    print_first_run_banner(first_run_info, f"http://127.0.0.1:{_port}")
 
 
 def archive_storage_status(cfg=None) -> dict:
@@ -692,6 +717,72 @@ app.jinja_env.globals["APP_VERSION"] = __version__
 @auth_mod.login_required
 def events_page():
     return render_template("events.html", user=g.user)
+# ======================================================================
+#  Мастер первого запуска
+# ======================================================================
+@app.route("/setup", methods=["GET", "POST"])
+def setup_page():
+    global SETUP_REQUIRED, SETUP_TOKEN
+    if not SETUP_REQUIRED or not SETUP_TOKEN:
+        return redirect(url_for("login"))
+    token = request.args.get("token") or request.form.get("token") or ""
+    if not secrets.compare_digest(token, SETUP_TOKEN):
+        abort(403)
+
+    error = None
+    suggested_token = secrets.token_urlsafe(24)
+    if request.method == "POST":
+        username = str(request.form.get("username") or "").strip()
+        password = str(request.form.get("password") or "")
+        confirm = str(request.form.get("password_confirm") or "")
+        api_token = str(request.form.get("api_token") or "").strip()
+        if len(username) < 3:
+            error = "Логин должен быть не короче 3 символов"
+        elif len(password) < 8:
+            error = "Пароль должен быть не короче 8 символов"
+        elif password != confirm:
+            error = "Пароли не совпадают"
+        else:
+            security = config.setdefault("security", {})
+            users = security.setdefault("users", [])
+            admin = next((u for u in users if u.get("role") == "admin"), None)
+            if admin is None:
+                admin = {"role": "admin"}
+                users.insert(0, admin)
+            admin["username"] = username
+            admin["password"] = password
+            admin["role"] = "admin"
+            security["users"] = [
+                u for u in users
+                if u is admin or str(u.get("password") or "") not in (
+                    "CHANGE-ME", "viewer", "admin",
+                )
+            ]
+            security["api_token"] = api_token or suggested_token
+            security["setup_completed"] = True
+            server = config.setdefault("server", {})
+            if str(server.get("secret_key") or "") in ("", "CHANGE-ME"):
+                server["secret_key"] = secrets.token_hex(32)
+            try:
+                CONFIG_PATH.write_text(
+                    yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                logger.exception("Не удалось сохранить первый запуск: %s", exc)
+                error = "Не удалось сохранить настройки. Проверьте права на config.yaml."
+            else:
+                app.config["APP_CONFIG"] = config
+                SETUP_REQUIRED = False
+                SETUP_TOKEN = None
+                logger.info("Первый запуск завершён: администратор %s", username)
+                return redirect(url_for("login"))
+    return render_template(
+        "setup.html", token=token, error=error,
+        suggested_token=suggested_token, version=__version__,
+    )
+
+
 # ======================================================================
 #  Аутентификация
 # ======================================================================

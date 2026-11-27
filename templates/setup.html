@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Первый запуск — VHS-Streamer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=4">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('vhs-theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+            } catch (e) {}
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/css/theme.css?v=2">
+    <style>
+        body { min-height:100vh; display:grid; place-items:center; padding:24px; }
+        .auth { width:100%; max-width:430px; background:linear-gradient(180deg,#171d26 0%,#12171f 100%); border:1px solid var(--border); border-radius:16px; padding:30px 28px 24px; box-shadow:0 24px 60px rgba(0,0,0,.5); }
+        .auth__logo { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+        .auth__mark { width:36px; height:36px; display:grid; place-items:center; border-radius:10px; background:var(--accent-soft); border:1px solid rgba(91,140,255,.35); font-size:1.05rem; }
+        .auth h1 { margin:0; font-size:1.12rem; font-weight:650; }
+        .auth__sub { margin:0 0 18px; color:var(--text-mute); font-size:.85rem; line-height:1.5; }
+        .auth label { display:block; margin:0 0 6px; font-size:.82rem; color:var(--text-dim); }
+        .auth input { width:100%; box-sizing:border-box; margin-bottom:12px; padding:10px 11px; font-size:.93rem; }
+        .auth button { width:100%; margin-top:4px; padding:11px 16px; }
+        .auth__err { margin-bottom:14px; padding:9px 12px; border-radius:9px; background:rgba(239,91,91,.12); border:1px solid rgba(239,91,91,.4); color:#ffb4b4; font-size:.86rem; }
+        .auth__note { margin:0 0 16px; padding:9px 11px; border-radius:7px; background:#11212b; border:1px solid #294854; color:#9fc9d5; font-size:.78rem; line-height:1.5; }
+        .auth__foot { margin-top:18px; padding-top:14px; border-top:1px solid var(--border-soft); display:flex; justify-content:space-between; color:var(--text-mute); font-size:.76rem; }
+    </style>
+</head>
+<body>
+<form class="auth" method="post">
+    <div class="auth__logo">
+        <span class="auth__mark">🎥</span>
+        <h1>Первый запуск</h1>
+    </div>
+    <p class="auth__sub">
+        Задайте учётную запись администратора и API-токен.
+        Эти данные будут сохранены в <code>config.yaml</code>.
+    </p>
+
+    {% if error %}<div class="auth__err">{{ error }}</div>{% endif %}
+    <div class="auth__note">
+        Код доступа к мастеру выведен в консоль Streamer.
+        После сохранения мастер закроется.
+    </div>
+
+    <input type="hidden" name="token" value="{{ token }}">
+
+    <label for="username">Логин администратора</label>
+    <input id="username" name="username" value="admin" minlength="3" maxlength="64" autofocus required autocomplete="username">
+
+    <label for="password">Пароль (не короче 8 символов)</label>
+    <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+
+    <label for="password_confirm">Повторите пароль</label>
+    <input id="password_confirm" name="password_confirm" type="password" minlength="8" required autocomplete="new-password">
+
+    <label for="api_token">API-токен</label>
+    <input id="api_token" name="api_token" value="{{ suggested_token }}" required autocomplete="off">
+    <p class="auth__note" style="margin-top:-4px">
+        Можно оставить предложенный токен или заменить своим.
+        Он используется для интеграции Viewer/Security.
+    </p>
+
+    <button type="submit" class="btn">Сохранить и войти</button>
+
+    <div class="auth__foot">
+        <span>{{ version }}</span>
+        <span>Первый запуск</span>
+    </div>
+</form>
+</body>
+</html>

@@ -249,9 +249,15 @@
     </table>
     <button class="btn secondary" onclick="addUserRow()">+ Добавить пользователя</button>
 
-    <h4 style="margin-top:24px">API-токен</h4>
+    <h4 style="margin-top:24px">Ключ интеграции</h4>
+    <p class="muted">
+        Используется Viewer и Security для доступа к
+        <code>/api/integration/streams</code>. Передаётся в заголовке
+        <code>X-VHS-Key</code> (совместим с <code>X-API-Token</code>).
+        Для каждого Viewer, подключающего этот Streamer, укажите этот ключ.
+    </p>
     <div class="form-row">
-        <label>Токен</label>
+        <label>Ключ Streamer</label>
         <input type="text" id="api-token" style="flex:1">
         <button class="btn secondary" type="button" onclick="generateToken()">Сгенерировать</button>
     </div>

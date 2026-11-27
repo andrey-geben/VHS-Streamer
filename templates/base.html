@@ -81,9 +81,10 @@
         .toast.err { background: #b13a3a; }
     </style>
     <link rel="stylesheet" href="/static/css/theme.css?v=7">
+    <link rel="stylesheet" href="/static/css/mosaic.css?v=1">
 </head>
 <body>
-<header>
+<header class="site-header">
     <div class="brand">🎥 VHS-Streamer</div>
     <nav>
         <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Камеры</a>
@@ -153,25 +154,13 @@
         setTimeout(() => { el.style.display = 'none'; }, 3000);
     }
 </script>
-<footer style="
-    margin-top: 40px;
-    padding: 16px 24px;
-    border-top: 1px solid #2a2f37;
-    color: #8b96a5;
-    font-size: 0.85em;
-    display: flex;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-">
+<footer class="site-footer">
     <span>{{ APP_FOOTER }}</span>
     {% block footer_monitor %}{% endblock %}
-    <span>
-        <a href="{{ url_for('help_page') }}"
-           style="color:#6cb2ff; text-decoration:none">Справка</a>
+    <span class="footer-links">
+        <a href="{{ url_for('help_page') }}">Справка</a>
         &nbsp;·&nbsp;
-        <a href="{{ url_for('about_page') }}"
-           style="color:#6cb2ff; text-decoration:none">О программе</a>
+        <a href="{{ url_for('about_page') }}">О программе</a>
     </span>
 </footer>
 <div class="toast" id="global-toast"></div>

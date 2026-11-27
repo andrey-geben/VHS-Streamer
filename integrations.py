@@ -1,4 +1,4 @@
-﻿"""Сопряжение VHS-Streamer с VHS-Viewer и VHS-Security."""
+"""Сопряжение VHS-Streamer с VHS-Viewer и VHS-Security."""
 
 from __future__ import annotations
 
@@ -25,7 +25,12 @@ def info():
         "app": "VHS-Streamer",
         "version": __version__,
         "role": "video",
+        "auth": {"header": "X-VHS-Key", "aliases": ["X-API-Token"]},
         "capabilities": ["rtsp", "archive", "onvif_events", "ptz", "motion"],
+        "endpoints": {
+            "streams": "/api/integration/streams",
+            "info": "/api/integration/info",
+        },
     })
 
 

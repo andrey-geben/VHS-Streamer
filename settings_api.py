@@ -26,6 +26,7 @@ import platform
 import re
 import secrets
 import shutil
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -45,6 +46,32 @@ IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
 
 settings_bp = Blueprint("settings", __name__)
+
+
+def _probe_rtsp_video(url: str, timeout: int = 6) -> bool:
+    """Проверяет, что RTSP-источник реально отдаёт видеопоток."""
+    if not url:
+        return False
+    try:
+        from audio_probe import _ffprobe_path
+        cmd = [
+            _ffprobe_path(),
+            "-rtsp_transport", "tcp",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            "-timeout", str(timeout * 1_000_000),
+            url,
+        ]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout + 4,
+            encoding="utf-8", errors="replace",
+        )
+        return "video" in (result.stdout or "").lower()
+    except Exception as exc:
+        logger.warning("RTSP probe %s: %s", url, exc)
+        return False
 
 
 # ======================================================================
@@ -1342,6 +1369,13 @@ def api_onvif_add_camera():
     if cam_id in loopback_urls:
         new_cfg["preview_source"] = loopback_urls[cam_id]
 
+    # Не добавляем автоматически камеру, если RTSP уже возвращает 401/404.
+    if not _probe_rtsp_video(rtsp_url, timeout=6):
+        return jsonify({
+            "error": "RTSP-поток недоступен: проверьте логин, пароль и URL камеры",
+            "code": "rtsp_unreachable",
+        }), 400
+
     try:
         cam = Camera(new_cfg)
         cam.start()
@@ -1441,6 +1475,21 @@ def api_ptz_info(camera_id: str):
     return jsonify(result)
 
 
+def _ptz_invert_flags(camera_id: str) -> dict:
+    try:
+        raw = next(
+            (c for c in _state()["config"].get("cameras", []) if c.get("id") == camera_id),
+            {},
+        )
+    except Exception:
+        raw = {}
+    return {
+        "pan": bool(raw.get("ptz_invert_pan")),
+        "tilt": bool(raw.get("ptz_invert_tilt")),
+        "zoom": bool(raw.get("ptz_invert_zoom")),
+    }
+
+
 @settings_bp.route("/api/cameras/<camera_id>/ptz/move", methods=["POST"])
 @admin_required
 def api_ptz_move(camera_id: str):
@@ -1460,6 +1509,16 @@ def api_ptz_move(camera_id: str):
     tilt = float(payload.get("tilt", 0.0))
     zoom = float(payload.get("zoom", 0.0))
     duration = float(payload.get("duration", 0.5))
+
+    # Инверсия осей — свойство камеры, чтобы одинаково работать
+    # во всех Viewer/Security, а не только в одном браузере.
+    flags = _ptz_invert_flags(camera_id)
+    if flags["pan"]:
+        pan = -pan
+    if flags["tilt"]:
+        tilt = -tilt
+    if flags["zoom"]:
+        zoom = -zoom
     profile_token = payload.get("profile_token")
 
     if not profile_token:
@@ -1541,6 +1600,38 @@ def api_ptz_home(camera_id: str):
         profile_token,
     )
     return jsonify({"ok": ok})
+
+
+@settings_bp.route("/api/cameras/<camera_id>/ptz/invert", methods=["POST"])
+@admin_required
+def api_ptz_invert(camera_id: str):
+    """Включить/выключить инверсию осей PTZ для камеры."""
+    st = _state()
+    if camera_id not in st["cameras"]:
+        return jsonify({"error": "not found"}), 404
+    payload = request.get_json(silent=True) or {}
+    raw = next(
+        (c for c in st["config"].get("cameras", []) if c.get("id") == camera_id),
+        None,
+    )
+    if raw is None:
+        return jsonify({"error": "not found"}), 404
+
+    if "invert" in payload:
+        value = bool(payload.get("invert"))
+        raw["ptz_invert_pan"] = value
+        raw["ptz_invert_tilt"] = value
+        raw["ptz_invert_zoom"] = value
+    else:
+        for axis in ("pan", "tilt", "zoom"):
+            if axis in payload:
+                raw[f"ptz_invert_{axis}"] = bool(payload.get(axis))
+    _save_config(st["config"], st["config_path"])
+    flags = _ptz_invert_flags(camera_id)
+    cached = _ptz_cache.get("data", {}).get(camera_id)
+    if isinstance(cached, dict):
+        cached.update(flags)
+    return jsonify({"ok": True, "invert": all(flags.values()), **flags})
 
 
 @settings_bp.route("/api/cameras/<camera_id>/ptz/preset/goto", methods=["POST"])
@@ -1813,6 +1904,7 @@ def api_ptz_capabilities():
                 "has_ptz": True,
                 "profile_token": info.get("profile_token"),
                 "endpoint": ep,
+                **_ptz_invert_flags(cam_id),
             }
             logger.info("[%s] PTZ доступен: %s", cam_id, ep)
         else:

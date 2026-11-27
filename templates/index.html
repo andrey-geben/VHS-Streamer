@@ -827,7 +827,9 @@ function openFullscreen(cameraId, cameraName) {
     const iframe = document.getElementById('fs-iframe');
     document.getElementById('fs-title').textContent = cameraName || cameraId;
 
-    iframe.src = _mtxUrl(cameraId);
+    // Не грузим MediaMTX напрямую: браузер не передаёт Basic Auth в WHEP
+    // из URL. /player/<id> уже содержит корректную авторизацию и WHEP-клиент.
+    iframe.src = '/player/' + encodeURIComponent(cameraId);
 
     _fsCameraId = cameraId;
 

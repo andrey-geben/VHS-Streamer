@@ -207,41 +207,37 @@ def _sync_mediamtx_auth(config: dict, mediamtx_config_path: Path) -> int:
 
         mtx_cfg["authInternalUsers"] = merged_users
 
-    # --- ВАЖНО: сохраняем динамические пути, добавленные через API ---
-    # MediaMTX при hot-reload перечитывает файл и УДАЛЯЕТ все пути,
-    # которых нет в секции paths. Если в файле "paths: {}" —
-    # все raw-пути и пользовательские потоки будут потеряны,
-    # и Camera/FFmpeg получат 400/404. Снимаем снимок через API
-    # и записываем в файл, чтобы сохранить их.
-    last_error = None
-    for attempt in range(3):
+    # --- Детерминированно пересобираем paths из config.yaml ---
+    # Раньше сюда записывался снимок API MediaMTX. Если камеру перенастроили
+    # (или добавление сорвалось), в файле оставался старый runOnInit/source,
+    # и MediaMTX бесконечно поднимал нерабочий FFmpeg. Теперь источник истины
+    # только текущий config.
+    from types import SimpleNamespace
+    from mediamtx_manager import build_raw_path_config, build_stream_path_config
+
+    paths = {}
+    for cam_cfg in (config.get("cameras") or []):
+        cam_id = str(cam_cfg.get("id") or "").strip()
+        if not cam_id:
+            continue
+        raw = f"__raw_{cam_id}"
         try:
-            r = requests.get(
-                "http://127.0.0.1:9997/v3/config/paths/list",
-                timeout=5,
-            )
-            if r.status_code == 200:
-                items = r.json().get("items", []) or []
-                if items:
-                    mtx_cfg["paths"] = {
-                        item["name"]: item for item in items
-                        if isinstance(item, dict) and item.get("name")
-                    }
-                    logger.info(
-                        "mediamtx.yml: сохранено %d динамических путей",
-                        len(mtx_cfg["paths"]),
-                    )
-                last_error = None
-            break
-        except Exception as e:
-            last_error = e
-            if attempt < 2:
-                time.sleep(1.0)
-    if last_error:
-        logger.warning(
-            "mediamtx.yml: не удалось сохранить динамические пути: %s",
-            last_error,
-        )
+            paths[raw] = build_raw_path_config(SimpleNamespace(**cam_cfg), raw)
+        except Exception as exc:
+            logger.warning("mediamtx.yml: путь %s не собран: %s", raw, exc)
+    for stream_cfg in (config.get("streams") or []):
+        if not stream_cfg.get("enabled", True):
+            continue
+        path = str(stream_cfg.get("path") or "").lstrip("/")
+        cam_id = str(stream_cfg.get("camera_id") or "").strip()
+        if not path or not cam_id:
+            continue
+        try:
+            paths[path] = build_stream_path_config(stream_cfg, f"__raw_{cam_id}")
+        except Exception as exc:
+            logger.warning("mediamtx.yml: поток %s не собран: %s", path, exc)
+    mtx_cfg["paths"] = paths
+    logger.info("mediamtx.yml: пересобрано %d путей из config.yaml", len(paths))
 
     try:
         with open(mtx_path, "w", encoding="utf-8") as f:
@@ -413,16 +409,14 @@ def _ensure_raw_path(camera, mediamtx, helpers):
     try:
         mediamtx.add_path(raw, cfg)
     except Exception as exc:
-        logger.warning("[%s] raw-путь не применён (%s) — перезапускаю MediaMTX",
-                       camera.id, exc)
-        try:
-            if mediamtx.restart():
-                mediamtx.add_path(raw, cfg)
-                logger.info("[%s] raw-путь применён после перезапуска", camera.id)
-            else:
-                logger.error("[%s] MediaMTX не поднялся — путь не создан", camera.id)
-        except Exception as exc2:
-            logger.error("[%s] путь не создан и после перезапуска: %s", camera.id, exc2)
+        # Не перезапускаем весь MediaMTX из-за одной камеры: при рестарте
+        # падают и уже работающие потоки (аналоговая камера, архив, Viewer).
+        # Сторож повторит добавление пути; если процесс мёртв — поднимет его.
+        logger.warning(
+            "[%s] raw-путь не применён (%s); MediaMTX не перезапускаю, "
+            "повторю через сторожа",
+            camera.id, exc,
+        )
 
 
 # ----------------------------------------------------------------------

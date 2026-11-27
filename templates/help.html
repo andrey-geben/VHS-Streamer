@@ -35,7 +35,7 @@
         <a href="#archive">Архив</a>
         <a href="#events">События и motion</a>
         <a href="#security">Пользователи и доступ</a>
-        <a href="#integration">Интеграция и API</a>
+        <a href="#integration">Связка VHS</a>
         <a href="#diagnostics">Диагностика</a>
         {% if is_arm %}
         <b style="margin-top:14px">ARM / Jetson</b>
@@ -149,23 +149,62 @@
             установки. Не оставляйте значения из <code>config.example.yaml</code>.
         </div>
 
-        <h2 id="integration">Интеграция и API</h2>
+        <h2 id="integration">Связка модулей VHS</h2>
         <p>
-            VHS-Viewer получает список потоков из Streamer, а VHS-Security — состояние
-            из Viewer. Streamer не требует Security для работы.
+            Streamer — источник видео. Viewer принимает поток, аналитику и события,
+            Security строит карту и тревоги. Модули могут работать на разных машинах;
+            обмен идёт по HTTP с единым ключом в заголовке
+            <code>X-VHS-Key</code>. Для совместимости принимается
+            <code>X-API-Token</code>.
         </p>
         <table class="help-table">
+            <tr><th>Модуль</th><th>Что настраивается</th></tr>
+            <tr>
+                <td><b>Streamer</b></td>
+                <td>Настройки → Безопасность → «Ключ интеграции». Этот ключ вводится
+                в Viewer для каждого Streamer и в Security как ключ Streamer.</td>
+            </tr>
+            <tr>
+                <td><b>Viewer</b></td>
+                <td>Настройки → «Серверы VHS-Streamer»: имя, URL, API-ключ.
+                Можно добавить несколько Streamer. Внутренний ключ Viewer
+                для Security — в разделе «Внутренний API и ключи».</td>
+            </tr>
+            <tr>
+                <td><b>Security</b></td>
+                <td>Настройки → «Интеграция VHS»: Viewer URL, ключ Viewer,
+                Streamer URL и ключ Streamer.</td>
+            </tr>
+        </table>
+        <h3>Порядок подключения</h3>
+        <ol>
+            <li>В Streamer скопировать «Ключ интеграции».</li>
+            <li>В Viewer добавить Streamer: URL вида
+                <code>http://192.168.1.10:{{ port }}</code> и ключ.
+                Нажать «Проверить».</li>
+            <li>В Viewer нажать «Обновить список потоков с серверов».</li>
+            <li>В Viewer сгенерировать «Ключ Viewer для Security».</li>
+            <li>В Security открыть «Интеграция VHS», указать Viewer URL,
+                ключ Viewer, а при необходимости — Streamer URL и ключ.</li>
+            <li>Проверить статусы и загрузку камер на карте Security.</li>
+        </ol>
+        <h3>API и проверка</h3>
+        <table class="help-table">
             <tr><th>Метод</th><th>Назначение</th></tr>
-            <tr><td><code>GET /api/integration/streams</code></td><td>список камер и WebRTC-URL для Viewer</td></tr>
+            <tr><td><code>GET /api/integration/info</code></td><td>версия, роль и контракт интеграции</td></tr>
+            <tr><td><code>GET /api/integration/streams</code></td><td>камеры и WebRTC-URL для Viewer/Security</td></tr>
             <tr><td><code>GET /api/streams</code></td><td>потоки и RTSP/WebRTC-ссылки</td></tr>
             <tr><td><code>GET /api/status</code></td><td>состояние сервера</td></tr>
             <tr><td><code>GET /health</code></td><td>health-check без авторизации</td></tr>
         </table>
-        <p>
-            Пример:
-        </p>
-        <pre>curl -H "X-API-Token: &lt;security.api_token&gt;" \
+        <pre>curl -H "X-VHS-Key: &lt;ключ Streamer&gt;" \
   http://127.0.0.1:{{ port }}/api/integration/streams</pre>
+        <p>
+            Viewer может опрашивать несколько Streamer одновременно. Если на двух
+            серверах одинаковые ID камер, для аналитики лучше задать разные ID.
+            Ключи не публикуйте в интернет; доступ между площадками — через
+            WireGuard/VPN.
+        </p>
 
         <h2 id="diagnostics">Диагностика</h2>
         <table class="help-table">

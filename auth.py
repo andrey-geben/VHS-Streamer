@@ -274,7 +274,11 @@ def _current_user() -> dict | None:
         return {"username": "anonymous", "role": "admin", "cameras": None}
 
     # API-токен → admin (доверенный системный клиент)
-    token = request.headers.get("X-API-Token") or request.args.get("token")
+    token = (
+        request.headers.get("X-VHS-Key")
+        or request.headers.get("X-API-Token")
+        or request.args.get("token")
+    )
     if token and verify_api_token(token):
         return {"username": "api", "role": "admin", "cameras": None}
 

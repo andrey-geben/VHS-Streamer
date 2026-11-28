@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM =====================================================================
 REM  VHS-Streamer — статус
 REM =====================================================================
@@ -34,17 +34,17 @@ if !errorlevel! == 0 (
     echo MediaMTX:  STOPPED
 )
 
-REM --- Порт 8000 ---
-netstat -ano | find ":8000 " | find "LISTENING" >nul
+REM --- Порт 8100 ---
+netstat -ano | find ":8100 " | find "LISTENING" >nul
 if !errorlevel! == 0 (
-    for /f "tokens=5" %%a in ('netstat -ano ^| find ":8000 " ^| find "LISTENING"') do (
-        echo Порт 8000: LISTENING ^(PID=%%a^)
-        goto :p8000done
+    for /f "tokens=5" %%a in ('netstat -ano ^| find ":8100 " ^| find "LISTENING"') do (
+        echo Порт 8100: LISTENING ^(PID=%%a^)
+        goto :p8100done
     )
 ) else (
-    echo Порт 8000: closed
+    echo Порт 8100: closed
 )
-:p8000done
+:p8100done
 
 REM --- Порт 8554 ---
 netstat -ano | find ":8554 " | find "LISTENING" >nul

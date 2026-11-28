@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM =====================================================================
 REM  VHS-Streamer — запуск сервера
 REM =====================================================================
@@ -27,10 +27,10 @@ if exist run.pid (
     )
 )
 
-REM --- Проверка порта 8000 ---
-netstat -ano | find ":8000 " | find "LISTENING" >nul
+REM --- Проверка порта 8100 ---
+netstat -ano | find ":8100 " | find "LISTENING" >nul
 if %errorlevel% == 0 (
-    echo [!] Порт 8000 занят другим процессом.
+    echo [!] Порт 8100 занят другим процессом.
     echo     Возможно, сервер уже запущен в другом окне.
     echo.
     pause
@@ -60,11 +60,11 @@ REM Надёжный способ: запустить и записать PID ч
 
 start "VHS-Streamer" cmd /k ".venv\Scripts\python.exe app.py"
 
-REM Ждём, пока python займёт порт 8000
+REM Ждём, пока python займёт порт 8100
 set /a WAIT=0
 :waitloop
 timeout /t 1 /nobreak >nul
-netstat -ano | find ":8000 " | find "LISTENING" >nul
+netstat -ano | find ":8100 " | find "LISTENING" >nul
 if %errorlevel% == 0 goto found
 set /a WAIT+=1
 if !WAIT! LSS 20 goto waitloop
@@ -73,8 +73,8 @@ pause
 exit /b 1
 
 :found
-REM Найдём PID питона, слушающего 8000
-for /f "tokens=5" %%a in ('netstat -ano ^| find ":8000 " ^| find "LISTENING"') do (
+REM Найдём PID питона, слушающего 8100
+for /f "tokens=5" %%a in ('netstat -ano ^| find ":8100 " ^| find "LISTENING"') do (
     set SERVER_PID=%%a
     goto :savepid
 )
@@ -82,7 +82,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| find ":8000 " ^| find "LISTENING"') d
 :savepid
 echo !SERVER_PID!> run.pid
 echo [OK] Сервер запущен. PID=!SERVER_PID!
-echo      Web UI:  http://localhost:8000
+echo      Web UI:  http://localhost:8100
 echo      Логи:    logs\vhs-streamer.log
 echo      Стоп:    stop.bat
 echo.

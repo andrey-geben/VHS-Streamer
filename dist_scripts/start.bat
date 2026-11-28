@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM VHS-Streamer — запуск (для собранного .exe)
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
@@ -20,9 +20,9 @@ if not exist "VHS-Streamer.exe" (
     exit /b 1
 )
 
-netstat -ano | find ":8000 " | find "LISTENING" >nul
+netstat -ano | find ":8100 " | find "LISTENING" >nul
 if %errorlevel% == 0 (
-    echo [!] Порт 8000 занят другим процессом.
+    echo [!] Порт 8100 занят другим процессом.
     pause
     exit /b 1
 )
@@ -33,7 +33,7 @@ start "VHS-Streamer" cmd /k VHS-Streamer.exe
 set /a WAIT=0
 :waitloop
 timeout /t 1 /nobreak >nul
-netstat -ano | find ":8000 " | find "LISTENING" >nul
+netstat -ano | find ":8100 " | find "LISTENING" >nul
 if %errorlevel% == 0 goto found
 set /a WAIT+=1
 if !WAIT! LSS 20 goto waitloop
@@ -42,14 +42,14 @@ pause
 exit /b 1
 
 :found
-for /f "tokens=5" %%a in ('netstat -ano ^| find ":8000 " ^| find "LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| find ":8100 " ^| find "LISTENING"') do (
     set SERVER_PID=%%a
     goto :savepid
 )
 :savepid
 echo !SERVER_PID!> run.pid
 echo [OK] Сервер запущен. PID=!SERVER_PID!
-echo      Web UI:  http://localhost:8000
+echo      Web UI:  http://localhost:8100
 timeout /t 3 /nobreak >nul
 endlocal
 exit /b 0

@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM =====================================================================
 REM  VHS-Streamer — установка на новую машину
 REM =====================================================================
@@ -183,11 +183,11 @@ exit /b 0
 
 REM =====================================================================
 REM  РџСЂР°РІРёР»Р° Р±СЂР°РЅРґРјР°СѓСЌСЂР° (РЅСѓР¶РЅС‹ РґР»СЏ СЂР°Р±РѕС‚С‹ РёР· СЃРµС‚Рё)
-REM  8000 вЂ” РІРµР±-РёРЅС‚РµСЂС„РµР№СЃ, 8081 вЂ” ONVIF, 8554 вЂ” RTSP,
+REM  8100 вЂ” РІРµР±-РёРЅС‚РµСЂС„РµР№СЃ, 8081 вЂ” ONVIF, 8554 вЂ” RTSP,
 REM  8889 вЂ” WebRTC (HTTP/WS), 8189/UDP вЂ” WebRTC ICE, 8080 вЂ” РґСѓР±Р»Рё
 REM =====================================================================
 echo [*] Р”РѕР±Р°РІР»СЏСЋ РїСЂР°РІРёР»Р° Р±СЂР°РЅРґРјР°СѓСЌСЂР°...
-netsh advfirewall firewall add rule name="VHS-Streamer UI 8000" dir=in action=allow protocol=TCP localport=8000 >nul
+netsh advfirewall firewall add rule name="VHS-Streamer UI 8100" dir=in action=allow protocol=TCP localport=8100 >nul
 netsh advfirewall firewall add rule name="VHS-Streamer ONVIF 8081" dir=in action=allow protocol=TCP localport=8081 >nul
 netsh advfirewall firewall add rule name="VHS-Streamer RTSP 8554" dir=in action=allow protocol=TCP localport=8554 >nul
 netsh advfirewall firewall add rule name="VHS-Streamer WebRTC 8889" dir=in action=allow protocol=TCP localport=8889 >nul
